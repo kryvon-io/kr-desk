@@ -39,7 +39,9 @@ async fn host_e_viewer_conectam_e_medem_rtt() {
         .with_handler(Arc::new(ViewerHandler {
             candidates: cand_tx,
         }))
-        .with_udp_addrs(vec!["127.0.0.1:0".to_string()])
+        // Como no app: todas as interfaces (no Windows, um socket preso ao loopback
+        // não alcança os candidatos do host, que usam os IPs reais).
+        .with_udp_addrs(vec!["0.0.0.0:0".to_string()])
         .build()
         .await
         .unwrap();

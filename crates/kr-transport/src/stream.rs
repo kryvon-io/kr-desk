@@ -5,14 +5,36 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use bytes::Bytes;
+use base64::Engine;
 use kr_core::media::{
-    EncodedFrame, EncoderFactory, PipelineConfig, PipelineControl, PipelineError, PipelineStats,
+    CursorUpdate, EncodedFrame, EncoderFactory, PipelineConfig, PipelineControl, PipelineError, PipelineStats,
     SourceFactory, run_pipeline,
 };
 use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
 
-use crate::VideoSender;
+use kr_proto::control::{ControlMessage, CursorImage};
+
+use crate::{ControlSender, VideoSender};
+
+fn cursor_message(update: CursorUpdate) -> ControlMessage {
+    match update {
+        CursorUpdate::Visible(visible) => ControlMessage::CursorVisible { visible },
+        CursorUpdate::Shape {
+            width,
+            height,
+            hot_x,
+            hot_y,
+            rgba,
+        } => ControlMessage::CursorShape(CursorImage {
+            w: width,
+            h: height,
+            hx: hot_x,
+            hy: hot_y,
+            rgba: base64::engine::general_purpose::STANDARD.encode(rgba),
+        }),
+    }
+}
 
 /// Quadros aguardando envio. Pouco, de propósito: atraso acumulado é pior
 /// que um quadro descartado.
@@ -28,14 +50,24 @@ pub struct VideoStream {
 impl VideoStream {
     /// Inicia captura e codificação numa thread própria (onde `source` e
     /// `encoder` são criados) e o envio numa task do runtime tokio atual.
+    /// Mudanças do cursor vão para `cursor`, se informado.
     pub fn start(
         video: VideoSender,
         source: SourceFactory,
         encoder: EncoderFactory,
         config: PipelineConfig,
+        cursor: Option<ControlSender>,
     ) -> std::io::Result<Self> {
         let control = PipelineControl::new();
         let (tx, mut rx) = mpsc::channel::<EncodedFrame>(QUEUE);
+        let (cursor_tx, mut cursor_rx) = mpsc::unbounded_channel::<CursorUpdate>();
+        if let Some(sender) = cursor {
+            tokio::spawn(async move {
+                while let Some(update) = cursor_rx.recv().await {
+                    sender.send(&cursor_message(update)).await;
+                }
+            });
+        }
 
         let writer_control = control.clone();
         tokio::spawn(async move {
@@ -62,8 +94,12 @@ impl VideoStream {
                         return Err(err.into());
                     }
                 };
-                let result = run_pipeline(source, encoder, config, pipeline_control, |frame| {
-                    match tx.try_send(frame) {
+                let result = run_pipeline(
+                    source,
+                    encoder,
+                    config,
+                    pipeline_control,
+                    |frame| match tx.try_send(frame) {
                         Ok(()) => true,
                         Err(mpsc::error::TrySendError::Full(_)) => {
                             // Descartar um quadro quebra a referência dos próximos:
@@ -73,8 +109,11 @@ impl VideoStream {
                             true
                         }
                         Err(mpsc::error::TrySendError::Closed(_)) => false,
-                    }
-                });
+                    },
+                    |update| {
+                        let _ = cursor_tx.send(update);
+                    },
+                );
                 if let Err(err) = &result {
                     error!(%err, "pipeline de vídeo parou");
                 }

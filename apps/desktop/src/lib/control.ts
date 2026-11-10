@@ -1,6 +1,8 @@
 /** Espelho de `kr_proto::control` (DataChannel `control`). */
 
 export const CONTROL_LABEL = "control";
+/** Canal não confiável para movimentos do mouse. */
+export const INPUT_LABEL = "input";
 
 export type CandidateType = "host" | "srflx" | "prflx" | "relay";
 
@@ -8,7 +10,19 @@ export type ControlMessage =
   | { t: "ping"; n: number }
   | { t: "pong"; n: number }
   | { t: "route"; local: CandidateType; remote: CandidateType; protocol: string }
-  | { t: "keyframe" };
+  | { t: "keyframe" }
+  | { t: "cursor_shape"; w: number; h: number; hx: number; hy: number; rgba: string }
+  | { t: "cursor_visible"; visible: boolean };
+
+export type MouseButton = "left" | "right" | "middle" | "x1" | "x2";
+
+/** Mensagens de entrada (viewer → host). Coordenadas normalizadas 0–65535. */
+export type InputMessage =
+  | { t: "mouse_move"; x: number; y: number }
+  | { t: "mouse_button"; button: MouseButton; down: boolean; x: number; y: number }
+  | { t: "wheel"; dx: number; dy: number }
+  | { t: "key"; code: number; ext: boolean; down: boolean }
+  | { t: "release_all" };
 
 const CANDIDATE_TYPES: readonly string[] = ["host", "srflx", "prflx", "relay"];
 
@@ -31,5 +45,18 @@ export function parseControl(raw: string): ControlMessage | null {
     return { t: "route", local: o.local, remote: o.remote, protocol: String(o.protocol ?? "") };
   }
   if (o.t === "keyframe") return { t: "keyframe" };
+  if (
+    o.t === "cursor_shape" &&
+    typeof o.w === "number" &&
+    typeof o.h === "number" &&
+    typeof o.hx === "number" &&
+    typeof o.hy === "number" &&
+    typeof o.rgba === "string"
+  ) {
+    return { t: "cursor_shape", w: o.w, h: o.h, hx: o.hx, hy: o.hy, rgba: o.rgba };
+  }
+  if (o.t === "cursor_visible" && typeof o.visible === "boolean") {
+    return { t: "cursor_visible", visible: o.visible };
+  }
   return null;
 }

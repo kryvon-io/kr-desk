@@ -1,5 +1,6 @@
 // Página de teste: o mesmo `ViewerPeer` do app, rodando num Chrome comum.
-// Sucesso = latência medida, rota informada e quadros H.264 decodificados.
+// Sucesso = latência medida, rota informada, quadros H.264 decodificados,
+// cursor recebido e entrada (mouse/teclado) entregue ao host.
 import { sampleVideo } from "../../apps/desktop/src/lib/video-stats";
 import { ViewerPeer, type SignalPayload } from "../../apps/desktop/src/lib/viewer-peer";
 
@@ -11,6 +12,7 @@ interface InteropResult {
   framesDecoded?: number;
   resolution?: string;
   decoder?: string;
+  cursor?: string;
   error?: string;
 }
 
@@ -39,6 +41,9 @@ ws.onopen = () => {
     onState: (s) => (result.state = s),
     onRtt: (ms) => (result.rttMs = ms),
     onRoute: (r) => (result.route = `${r.local}/${r.remote}/${r.protocol}`),
+    onCursor: (msg) => {
+      if (msg.t === "cursor_shape") result.cursor = `${msg.w}x${msg.h}`;
+    },
     onVideo: (stream) => {
       video.srcObject = stream;
       void video.play().catch(() => undefined);
@@ -61,13 +66,25 @@ ws.onopen = () => {
         !result.ok &&
         result.rttMs !== undefined &&
         result.route !== undefined &&
-        s.framesDecoded >= MIN_FRAMES
+        s.framesDecoded >= MIN_FRAMES &&
+        result.cursor !== undefined
       ) {
         result.ok = true;
         clearInterval(timer);
-        ws.send("done");
+        sendInputAndFinish(peer);
       }
     });
   }, 250);
 };
 ws.onerror = () => (result.error = "falha no WebSocket");
+
+function sendInputAndFinish(peer: ViewerPeer) {
+  for (let i = 0; i < 5; i++) peer.sendInput({ t: "mouse_move", x: 1000 * i, y: 2000 });
+  peer.sendInput({ t: "mouse_button", button: "left", down: true, x: 5000, y: 2000 });
+  peer.sendInput({ t: "mouse_button", button: "left", down: false, x: 5000, y: 2000 });
+  peer.sendInput({ t: "wheel", dx: 0, dy: -120 });
+  peer.sendInput({ t: "key", code: 0x1e, ext: false, down: true });
+  peer.sendInput({ t: "key", code: 0x1e, ext: false, down: false });
+  // Dá tempo de o canal não confiável entregar antes de encerrar.
+  setTimeout(() => ws.send("done"), 500);
+}

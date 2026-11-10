@@ -6,7 +6,15 @@
  * sinalização. Independe de React e de Tauri para poder ser
  * testado num Chrome comum (`scripts/p2p-interop`).
  */
-import { CONTROL_LABEL, isCandidateType, parseControl, type CandidateType } from "./control";
+import {
+  CONTROL_LABEL,
+  INPUT_LABEL,
+  isCandidateType,
+  parseControl,
+  type CandidateType,
+  type ControlMessage,
+  type InputMessage,
+} from "./control";
 
 /** Formato de `payload` de `signal` (igual a `kr_transport::SignalPayload`). */
 export type SignalPayload =
@@ -37,6 +45,8 @@ export interface ViewerPeerEvents {
   onControlOpen?: () => void;
   /** Vídeo da tela do host chegou. */
   onVideo?: (stream: MediaStream) => void;
+  /** O host mudou a forma ou a visibilidade do cursor. */
+  onCursor?: (msg: Extract<ControlMessage, { t: "cursor_shape" | "cursor_visible" }>) => void;
 }
 
 const PING_INTERVAL_MS = 1000;
@@ -44,6 +54,7 @@ const PING_INTERVAL_MS = 1000;
 export class ViewerPeer {
   readonly pc: RTCPeerConnection;
   private readonly control: RTCDataChannel;
+  private readonly input: RTCDataChannel;
   readonly video: RTCRtpTransceiver;
   private readonly timers: ReturnType<typeof setInterval>[] = [];
   private seq = 1;
@@ -63,6 +74,8 @@ export class ViewerPeer {
       ...(options.forceRelay ? { iceTransportPolicy: "relay" as const } : {}),
     });
     this.control = this.pc.createDataChannel(CONTROL_LABEL, { ordered: true });
+    // Movimentos do mouse: sem retransmissão nem ordem (o próximo substitui).
+    this.input = this.pc.createDataChannel(INPUT_LABEL, { ordered: false, maxRetransmits: 0 });
     this.video = this.pc.addTransceiver("video", { direction: "recvonly" });
     preferH264(this.video);
     // Latência acima de suavidade: o mínimo de buffer que o decodificador aceitar.
@@ -117,6 +130,17 @@ export class ViewerPeer {
     if (this.control.readyState === "open") this.control.send(JSON.stringify({ t: "keyframe" }));
   }
 
+  /** Envia entrada ao host. Movimentos vão pelo canal não confiável. */
+  sendInput(msg: InputMessage): boolean {
+    const channel =
+      msg.t === "mouse_move" && this.input.readyState === "open" ? this.input : this.control;
+    if (channel.readyState !== "open") return false;
+    // Evita acumular movimentos se a rede engasgar.
+    if (msg.t === "mouse_move" && channel.bufferedAmount > 16 * 1024) return false;
+    channel.send(JSON.stringify(msg));
+    return true;
+  }
+
   private ping() {
     if (this.control.readyState !== "open") return;
     const n = this.seq++;
@@ -131,6 +155,8 @@ export class ViewerPeer {
     else if (msg.t === "pong" && this.inFlight?.n === msg.n) {
       this.events.onRtt?.(Math.round(performance.now() - this.inFlight.at));
       this.inFlight = null;
+    } else if (msg.t === "cursor_shape" || msg.t === "cursor_visible") {
+      this.events.onCursor?.(msg);
     }
   }
 
@@ -165,6 +191,8 @@ export class ViewerPeer {
     if (this.closed) return;
     this.closed = true;
     this.stopTimers();
+    if (this.control.readyState === "open") this.control.send(JSON.stringify({ t: "release_all" }));
+    this.input.close();
     this.control.close();
     this.pc.close();
   }

@@ -93,5 +93,5 @@ if (hostCode !== 0 || !viewer?.ok) {
   process.exit(1);
 }
 console.log(
-  "OK: Rust (webrtc-rs) e Chrome conectaram ponto a ponto, mediram a latência e o Chrome decodificou o vídeo H.264.",
+  "OK: Rust (webrtc-rs) e Chrome conectaram ponto a ponto, mediram a latência, o Chrome decodificou o vídeo H.264 e a entrada (mouse/teclado) e o cursor chegaram.",
 );

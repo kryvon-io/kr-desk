@@ -8,6 +8,36 @@ use serde::{Deserialize, Serialize};
 /// Rótulo do DataChannel de controle, criado pelo viewer.
 pub const CONTROL_LABEL: &str = "control";
 
+/// DataChannel não confiável (sem retransmissão) para movimentos do mouse:
+/// um movimento perdido é substituído pelo próximo, sem atrasar os demais.
+pub const INPUT_LABEL: &str = "input";
+
+/// Coordenada normalizada (0 = borda esquerda/superior, 65535 = direita/inferior)
+/// relativa à tela transmitida.
+pub type NormCoord = u16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+    X1,
+    X2,
+}
+
+/// Imagem do cursor do host (RGBA 8 bits, sem pré-multiplicação).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CursorImage {
+    pub w: u32,
+    pub h: u32,
+    /// Ponto ativo (hotspot) em pixels.
+    pub hx: u32,
+    pub hy: u32,
+    /// Pixels RGBA em base64 (`w * h * 4` bytes).
+    pub rgba: String,
+}
+
 /// Tipo de candidato ICE usado pela conexão (RFC 8445).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -43,6 +73,26 @@ pub enum ControlMessage {
     },
     /// Viewer → host: pede um keyframe (ex.: o `<video>` acabou de montar).
     Keyframe,
+    /// Viewer → host: move o ponteiro (canal `input`).
+    MouseMove { x: NormCoord, y: NormCoord },
+    /// Viewer → host: botão pressionado/solto na posição dada.
+    MouseButton {
+        button: MouseButton,
+        down: bool,
+        x: NormCoord,
+        y: NormCoord,
+    },
+    /// Viewer → host: roda do mouse em unidades do Windows (120 = um "clique";
+    /// `dy > 0` rola para cima, `dx > 0` para a direita).
+    Wheel { dx: i32, dy: i32 },
+    /// Viewer → host: tecla por scancode (conjunto 1) — independe do layout.
+    Key { code: u16, ext: bool, down: bool },
+    /// Viewer → host: solta todas as teclas e botões (perda de foco, fim).
+    ReleaseAll,
+    /// Host → viewer: nova forma do cursor.
+    CursorShape(CursorImage),
+    /// Host → viewer: cursor visível ou oculto (ex.: vídeo em tela cheia).
+    CursorVisible { visible: bool },
 }
 
 impl ControlMessage {

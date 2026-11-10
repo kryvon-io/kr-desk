@@ -3,5 +3,14 @@
   { "t": "pong", "n": 1 },
   { "t": "route", "local": "srflx", "remote": "host", "protocol": "udp" },
   { "t": "route", "local": "relay", "remote": "prflx", "protocol": "tcp" },
-  { "t": "keyframe" }
+  { "t": "keyframe" },
+  { "t": "mouse_move", "x": 0, "y": 65535 },
+  { "t": "mouse_button", "button": "left", "down": true, "x": 32768, "y": 100 },
+  { "t": "mouse_button", "button": "x2", "down": false, "x": 1, "y": 2 },
+  { "t": "wheel", "dx": 0, "dy": -120 },
+  { "t": "key", "code": 30, "ext": false, "down": true },
+  { "t": "key", "code": 75, "ext": true, "down": false },
+  { "t": "release_all" },
+  { "t": "cursor_shape", "w": 1, "h": 1, "hx": 0, "hy": 0, "rgba": "AAAA/w==" },
+  { "t": "cursor_visible", "visible": false }
 ]

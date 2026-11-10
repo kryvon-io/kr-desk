@@ -3,6 +3,7 @@
 mod commands;
 mod logging;
 mod p2p;
+mod screen;
 mod signaling;
 mod tray;
 

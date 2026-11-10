@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 kr-proto.workspace = true
+kr-core.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 serde.workspace = true
@@ -16,9 +17,12 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
 tracing.workspace = true
+uuid.workspace = true
 webrtc.workspace = true
+rtc.workspace = true
 
 [dev-dependencies]
+kr-codec-soft.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
 tokio-tungstenite.workspace = true

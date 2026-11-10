@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ConnectCard } from "@/components/connect-card";
 import { IncomingRequestDialog } from "@/components/incoming-request-dialog";
 import { MyIdCard } from "@/components/my-id-card";
+import { RemoteScreen } from "@/components/remote-screen";
 import { SessionBanner } from "@/components/session-banner";
 import { StatusBadge } from "@/components/status-badge";
 import { fetchAppInfo, type AppInfo } from "@/lib/app-info";
@@ -11,8 +12,17 @@ import { useSignaling } from "@/lib/use-signaling";
 
 export default function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
-  const { state, deviceName, tauri, connectTo, respond, endSession, resetOutgoing, dismissNotice } =
-    useSignaling();
+  const {
+    state,
+    remote,
+    deviceName,
+    tauri,
+    connectTo,
+    respond,
+    endSession,
+    resetOutgoing,
+    dismissNotice,
+  } = useSignaling();
 
   useEffect(() => {
     fetchAppInfo()
@@ -25,6 +35,21 @@ export default function App() {
     const t = setTimeout(dismissNotice, 6000);
     return () => clearTimeout(t);
   }, [state.notice, dismissNotice]);
+
+  // Acessando outro computador: a janela inteira vira a tela remota.
+  if (state.active?.role === "viewer") {
+    return (
+      <>
+        <RemoteScreen
+          session={state.active}
+          peer={remote?.peer ?? null}
+          stream={remote?.stream ?? null}
+          onEnd={endSession}
+        />
+        <IncomingRequestDialog request={state.incoming[0]} onAnswer={respond} />
+      </>
+    );
+  }
 
   return (
     <main className="flex min-h-screen flex-col items-center gap-6 p-8">

@@ -1,8 +1,9 @@
 //! Núcleo do KR Desk, independente de plataforma.
 //!
-//! Aqui ficarão o `SessionManager`, a máquina de estados da sessão e as traits
-//! (`Capturer`, `Encoder`, `Injector`, `Transport`) implementadas pelos crates
-//! `*-win`. Na Etapa 0 expõe apenas as informações de build.
+//! Contém as traits implementadas pelos crates `*-win` e a lógica que não
+//! depende do Windows (ex.: o pipeline de vídeo em [`media`]).
+
+pub mod media;
 
 use serde::Serialize;
 

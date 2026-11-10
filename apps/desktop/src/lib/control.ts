@@ -7,7 +7,8 @@ export type CandidateType = "host" | "srflx" | "prflx" | "relay";
 export type ControlMessage =
   | { t: "ping"; n: number }
   | { t: "pong"; n: number }
-  | { t: "route"; local: CandidateType; remote: CandidateType; protocol: string };
+  | { t: "route"; local: CandidateType; remote: CandidateType; protocol: string }
+  | { t: "keyframe" };
 
 const CANDIDATE_TYPES: readonly string[] = ["host", "srflx", "prflx", "relay"];
 
@@ -29,5 +30,6 @@ export function parseControl(raw: string): ControlMessage | null {
   if (o.t === "route" && isCandidateType(o.local) && isCandidateType(o.remote)) {
     return { t: "route", local: o.local, remote: o.remote, protocol: String(o.protocol ?? "") };
   }
+  if (o.t === "keyframe") return { t: "keyframe" };
   return null;
 }

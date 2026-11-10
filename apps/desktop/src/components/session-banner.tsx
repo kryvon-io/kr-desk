@@ -1,4 +1,4 @@
-import { Loader2, MonitorUp, Power, Router, TriangleAlert, Zap } from "lucide-react";
+import { Cast, Loader2, MonitorUp, Power, Router, TriangleAlert, Zap } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { formatId, type ActiveSession, type P2pStatus } from "@/lib/signaling-state";
@@ -55,10 +55,13 @@ export function SessionBanner({
   session: ActiveSession;
   onEnd: (requestId: string) => void;
 }) {
+  const peer = <span className="whitespace-nowrap font-mono">{formatId(session.peerId)}</span>;
   const text =
-    session.role === "host"
-      ? `Este computador autorizou o acesso de ${formatId(session.peerId)}`
-      : `Sessão autorizada com ${formatId(session.peerId)}`;
+    session.role === "host" ? (
+      <>Este computador autorizou o acesso de {peer}</>
+    ) : (
+      <>Sessão autorizada com {peer}</>
+    );
   const failed = session.p2p.state === "failed";
   return (
     <div
@@ -78,6 +81,11 @@ export function SessionBanner({
         <span className="pl-6 text-xs" aria-live="polite">
           <P2pLine p2p={session.p2p} />
         </span>
+        {session.role === "host" && session.p2p.sharing && (
+          <span className="flex items-center gap-1.5 pl-6 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+            <Cast className="size-3.5" /> Sua tela está sendo transmitida
+          </span>
+        )}
       </div>
       <Button variant="outline" size="sm" onClick={() => onEnd(session.requestId)}>
         <Power /> Encerrar

@@ -41,6 +41,8 @@ pub enum ControlMessage {
         remote: CandidateType,
         protocol: String,
     },
+    /// Viewer → host: pede um keyframe (ex.: o `<video>` acabou de montar).
+    Keyframe,
 }
 
 impl ControlMessage {

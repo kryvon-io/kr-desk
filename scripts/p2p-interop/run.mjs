@@ -92,4 +92,6 @@ if (hostCode !== 0 || !viewer?.ok) {
   console.error("FALHOU: interoperabilidade WebRTC Rust × Chrome");
   process.exit(1);
 }
-console.log("OK: Rust (webrtc-rs) e Chrome conectaram ponto a ponto e mediram a latência.");
+console.log(
+  "OK: Rust (webrtc-rs) e Chrome conectaram ponto a ponto, mediram a latência e o Chrome decodificou o vídeo H.264.",
+);

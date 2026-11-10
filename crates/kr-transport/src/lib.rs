@@ -5,7 +5,14 @@
 //! opaco para o servidor, no formato de [`SignalPayload`].
 //!
 //! Este crate não sabe nada de Tauri: recebe sinais com
-//! [`HostPeer::handle_signal`] e publica [`PeerEvent`]s num canal.
+//! [`HostPeer::handle_signal`] e publica [`PeerEvent`]s num canal. O vídeo da
+//! tela sai pela trilha H.264 de [`HostPeer::video`].
+
+mod stream;
+mod video;
+
+pub use stream::VideoStream;
+pub use video::{H264_FMTP, H264_MIME, VideoSender};
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -13,10 +20,13 @@ use std::time::{Duration, Instant};
 
 use kr_proto::IceServer;
 use kr_proto::control::{CONTROL_LABEL, CandidateType, ControlMessage};
+use rtc::interceptor::Slot;
+use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, info, warn};
 use webrtc::data_channel::{DataChannel, DataChannelEvent, RTCDataChannelState};
+use webrtc::media_stream::track_local::TrackLocal;
 use webrtc::peer_connection::{
     MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler,
     RTCConfigurationBuilder, RTCIceCandidateInit, RTCIceServer, RTCPeerConnectionIceEvent,
@@ -105,6 +115,8 @@ pub enum PeerEvent {
     Route(Route),
     /// DataChannel de controle aberto (canal P2P pronto).
     ControlOpen,
+    /// O viewer pediu um keyframe (PLI/FIR no RTCP ou `keyframe` no controle).
+    KeyframeRequest,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -113,6 +125,8 @@ pub enum TransportError {
     WebRtc(#[from] webrtc::error::Error),
     #[error("sinal inválido: {0}")]
     BadSignal(String),
+    #[error("vídeo: {0}")]
+    Video(String),
 }
 
 pub type Result<T> = std::result::Result<T, TransportError>;
@@ -135,6 +149,7 @@ pub struct HostPeer {
     pending: Mutex<Vec<CandidateInit>>,
     has_remote: std::sync::atomic::AtomicBool,
     shared: Arc<Shared>,
+    video: VideoSender,
 }
 
 /// Estado compartilhado com os callbacks do webrtc-rs.
@@ -260,6 +275,7 @@ async fn control_loop(dc: Arc<dyn DataChannel>, shared: Arc<Shared>) {
                             protocol,
                         }));
                     }
+                    Ok(ControlMessage::Keyframe) => shared.emit(PeerEvent::KeyframeRequest),
                     Err(err) => debug!(%err, "mensagem de controle desconhecida"),
                 }
             }
@@ -285,9 +301,13 @@ impl HostPeer {
             in_flight: std::sync::Mutex::new(None),
         });
 
+        // Só H.264: o viewer recebe vídeo e o resto vai por DataChannel.
         let mut media_engine = MediaEngine::default();
-        media_engine.register_default_codecs()?;
-        let registry = register_default_interceptors(Registry::new(), &mut media_engine)?;
+        media_engine.register_codec(video::h264_codec(), RtpCodecKind::Video)?;
+        let registry = register_default_interceptors(Registry::new(), &mut media_engine)?.with(
+            Slot::from(video::KEYFRAME_INTERCEPTOR_SLOT),
+            video::KeyframeRequestInterceptor::default(),
+        );
         let config = RTCConfigurationBuilder::new()
             .with_ice_servers(to_rtc_ice_servers(ice_servers))
             .build();
@@ -302,13 +322,36 @@ impl HostPeer {
             .with_udp_addrs(vec!["0.0.0.0:0".to_string()])
             .build()
             .await?;
+        let pc: Arc<dyn PeerConnection> = Arc::new(pc);
+
+        // A trilha entra antes da oferta chegar: o m=video `recvonly` do viewer
+        // é associado a ela no `set_remote_description`.
+        let track = video::new_track()?;
+        let sender = pc
+            .add_track(Arc::clone(&track) as Arc<dyn TrackLocal>)
+            .await?;
+        let video = VideoSender::new(track, sender);
+        let keyframes = video.clone();
+        let events = shared.clone();
+        tokio::spawn(async move {
+            while keyframes.next_keyframe_request().await.is_some() {
+                debug!("PLI/FIR recebido");
+                events.emit(PeerEvent::KeyframeRequest);
+            }
+        });
 
         Ok(Self {
-            pc: Arc::new(pc),
+            pc,
             pending: Mutex::new(Vec::new()),
             has_remote: std::sync::atomic::AtomicBool::new(false),
             shared,
+            video,
         })
+    }
+
+    /// Trilha de vídeo para enviar a tela.
+    pub fn video(&self) -> VideoSender {
+        self.video.clone()
     }
 
     /// Processa um `payload` recebido do viewer.

@@ -148,7 +148,12 @@ describe("estado P2P", () => {
       { type: "p2p_status", requestId: RID, route },
       { type: "p2p_status", requestId: "outra", state: "failed" },
     );
-    expect(s.active?.p2p).toEqual({ state: "connected", rttMs: 12, route });
+    expect(s.active?.p2p).toEqual({ state: "connected", rttMs: 12, route, sharing: false });
+  });
+
+  it("marca quando a tela do host está sendo transmitida", () => {
+    const s = run(online, ready, { type: "p2p_status", requestId: RID, sharing: true });
+    expect(s.active?.p2p.sharing).toBe(true);
   });
 });
 

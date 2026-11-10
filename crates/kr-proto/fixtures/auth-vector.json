@@ -1,0 +1,7 @@
+{
+  "description": "Vetor Ed25519 determinístico (seed = bytes 1..32). Não é uma chave real.",
+  "seed_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+  "public_key": "ebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ",
+  "nonce": "q8ZKxUhNw1-7uQb3aM0v4Q",
+  "signature": "eTYwNbAcXVDuAW2H6mX4FPZV_F0bHKStIyDAda2Hefpqyt8QH3Sb7iOpzGdLfPtGosl9yUSMg9sS42nDKNiKBA"
+}

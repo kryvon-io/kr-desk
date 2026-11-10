@@ -1,9 +1,15 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { buildApp, PROTOCOL_VERSION } from "../src/build-app.js";
+import { MemoryBus } from "../src/bus.js";
+import { buildApp, PROTOCOL_VERSION, SERVICE_VERSION } from "../src/build-app.js";
+import { MemoryStore } from "../src/store.js";
+import { StunOnly } from "../src/turn.js";
 
 describe("GET /health", () => {
-  const app = buildApp();
+  let app: Awaited<ReturnType<typeof buildApp>>;
+  beforeAll(async () => {
+    app = await buildApp({ bus: new MemoryBus(), store: new MemoryStore(), turn: new StunOnly() });
+  });
   afterAll(() => app.close());
 
   it("responde ok com a versão do protocolo", async () => {
@@ -12,7 +18,7 @@ describe("GET /health", () => {
     expect(res.json()).toEqual({
       status: "ok",
       service: "kr-desk-signaling",
-      version: "0.1.0",
+      version: SERVICE_VERSION,
       protocolVersion: PROTOCOL_VERSION,
     });
   });

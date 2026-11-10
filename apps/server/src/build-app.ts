@@ -1,15 +1,42 @@
-import Fastify, { type FastifyServerOptions } from "fastify";
+import websocket from "@fastify/websocket";
+import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 
-/** Mantém em sincronia com `kr_proto::PROTOCOL_VERSION`. */
-export const PROTOCOL_VERSION = 1;
-export const SERVICE_VERSION = "0.1.0";
+import type { Bus } from "./bus.js";
+import { SignalingHub, type HubConfig } from "./hub.js";
+import { PROTOCOL_VERSION } from "./protocol.js";
+import type { DeviceStore } from "./store.js";
+import type { TurnProvider } from "./turn.js";
 
-/**
- * Monta a aplicação sem iniciar a escuta, para ser usada tanto pelo
- * entrypoint (`src/index.ts`, detectado pela Vercel) quanto pelos testes.
- */
-export function buildApp(options: FastifyServerOptions = {}) {
-  const app = Fastify(options);
+export { PROTOCOL_VERSION };
+export const SERVICE_VERSION = "0.2.0";
+
+/** Tamanho máximo de uma mensagem WebSocket (SDP cabe com folga). */
+export const MAX_MESSAGE_BYTES = 64 * 1024;
+
+export interface AppDeps {
+  bus: Bus;
+  store: DeviceStore;
+  turn: TurnProvider;
+  hubConfig?: Partial<HubConfig>;
+}
+
+/** Opções padrão do Fastify para o servidor de sinalização. */
+export const SERVER_OPTIONS = {
+  // Atrás da Vercel o IP real vem em X-Forwarded-For (usado no rate limit).
+  trustProxy: true,
+} satisfies FastifyServerOptions;
+
+/** Registra rotas, WebSocket e hub numa instância Fastify já criada. */
+export async function configureApp(app: FastifyInstance, deps: AppDeps) {
+  const hub = new SignalingHub({
+    bus: deps.bus,
+    store: deps.store,
+    turn: deps.turn,
+    log: app.log,
+    ...(deps.hubConfig ? { config: deps.hubConfig } : {}),
+  });
+
+  await app.register(websocket, { options: { maxPayload: MAX_MESSAGE_BYTES } });
 
   app.get("/health", async () => ({
     status: "ok" as const,
@@ -18,5 +45,26 @@ export function buildApp(options: FastifyServerOptions = {}) {
     protocolVersion: PROTOCOL_VERSION,
   }));
 
+  app.get("/ws", { websocket: true }, (socket, request) => {
+    hub.attach(socket, request.ip);
+  });
+
+  app.addHook("onClose", async () => {
+    await hub.closeAll();
+    await Promise.allSettled([deps.bus.close(), deps.store.close()]);
+  });
+
+  app.decorate("hub", hub);
   return app;
+}
+
+/** Cria e configura a aplicação sem iniciar a escuta (usado nos testes). */
+export async function buildApp(deps: AppDeps, options: FastifyServerOptions = {}) {
+  return configureApp(Fastify({ ...SERVER_OPTIONS, ...options }), deps);
+}
+
+declare module "fastify" {
+  interface FastifyInstance {
+    hub: SignalingHub;
+  }
 }

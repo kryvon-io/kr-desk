@@ -1,0 +1,29 @@
+// use prisma-8
+
+// Dispositivos registrados. O `id` é o ID público de 9 dígitos exibido no app.
+model Device {
+  id         String   @id
+  publicKey  String   @unique
+  name       String
+  appVersion String
+  createdAt  DateTime @default(now()) @onCreate(now())
+  lastSeenAt DateTime @default(now())
+
+  @@map("devices")
+}
+
+// Histórico de pedidos/sessões (auditoria). `id` = request_id (UUID).
+model SessionLog {
+  id         String    @id
+  hostId     String
+  viewerId   String
+  status     String
+  createdAt  DateTime  @default(now()) @onCreate(now())
+  acceptedAt DateTime?
+  endedAt    DateTime?
+  endReason  String?
+
+  @@index([hostId])
+  @@index([viewerId])
+  @@map("session_logs")
+}

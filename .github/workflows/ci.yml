@@ -21,6 +21,25 @@ jobs:
   js:
     name: JS — formato, lint, tipos, testes, build
     runs-on: ubuntu-latest
+    # Postgres e Redis reais para os testes de integração do servidor.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: krdesk_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/krdesk_test
+      TEST_REDIS_URL: redis://localhost:6379/1
+      PRISMA_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v7
         with:
@@ -34,6 +53,13 @@ jobs:
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
+      - name: Verificar migrações e aplicar no banco de teste
+        working-directory: apps/server
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: |
+          pnpm exec prisma migration check
+          pnpm exec prisma db migrate --yes --no-interactive
       - run: pnpm test
       - run: pnpm --filter @kr-desk/desktop build
 

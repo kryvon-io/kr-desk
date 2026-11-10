@@ -6,7 +6,10 @@
 //!   a tela remota aberta e a janela em primeiro plano, cada tecla (inclusive
 //!   Win e Alt+Tab) vira o evento `viewer-key` para a interface mandar ao host.
 
-use kr_core::input::{InputController, InputSink};
+use kr_core::input::InputController;
+#[cfg(not(windows))]
+use kr_core::input::InputSink;
+#[cfg(not(windows))]
 use kr_proto::control::{MouseButton, NormCoord};
 use tauri::AppHandle;
 #[cfg(windows)]
@@ -24,9 +27,11 @@ pub struct KeyDto {
 }
 
 /// Destino usado onde não há injeção (desenvolvimento em Linux): só registra.
+#[cfg(not(windows))]
 #[derive(Debug, Default)]
 pub struct LogSink;
 
+#[cfg(not(windows))]
 impl InputSink for LogSink {
     fn move_to(&mut self, _x: NormCoord, _y: NormCoord) {}
     fn button(&mut self, button: MouseButton, down: bool) {

@@ -52,6 +52,22 @@ export interface P2pStatus {
   route: RouteInfo | null;
   /** Host: a tela deste computador está sendo transmitida. */
   sharing: boolean;
+  /** O viewer pode controlar mouse e teclado. */
+  control: boolean;
+  /** Código de verificação (igual nas duas telas sem intermediário). */
+  verificationCode: string | null;
+  /** Identidade do outro computador verificada. */
+  authenticated: boolean;
+  /** Primeira conexão com este computador (vale comparar o código). */
+  firstContact: boolean;
+}
+
+/** Falha de segurança que encerrou (ou impediu) uma sessão. */
+export interface SecurityAlert {
+  peerId: string;
+  reason: string;
+  /** A chave do outro computador mudou desde a última conexão. */
+  keyChanged: boolean;
 }
 
 export interface IncomingRequest {
@@ -76,7 +92,16 @@ export interface ActiveSession {
   p2p: P2pStatus;
 }
 
-const P2P_INITIAL: P2pStatus = { state: "connecting", rttMs: null, route: null, sharing: false };
+const P2P_INITIAL: P2pStatus = {
+  state: "connecting",
+  rttMs: null,
+  route: null,
+  sharing: false,
+  control: false,
+  verificationCode: null,
+  authenticated: false,
+  firstContact: false,
+};
 
 export interface SignalingState {
   status: ConnectionStatus;
@@ -88,6 +113,7 @@ export interface SignalingState {
   active: ActiveSession | null;
   /** Aviso informativo de curta duração (ex.: "O outro lado encerrou"). */
   notice: string | null;
+  securityAlert: SecurityAlert | null;
 }
 
 export const initialState: SignalingState = {
@@ -97,6 +123,7 @@ export const initialState: SignalingState = {
   incoming: [],
   active: null,
   notice: null,
+  securityAlert: null,
 };
 
 export type Action =
@@ -109,6 +136,8 @@ export type Action =
   | { type: "outgoing_reset" }
   | { type: "session_closed"; requestId: string }
   | { type: "notice_dismissed" }
+  | { type: "security_failed"; alert: SecurityAlert }
+  | { type: "security_dismissed" }
   | {
       type: "p2p_status";
       requestId: string;
@@ -116,6 +145,10 @@ export type Action =
       rttMs?: number | null;
       route?: RouteInfo | null;
       sharing?: boolean;
+      control?: boolean;
+      verificationCode?: string | null;
+      authenticated?: boolean;
+      firstContact?: boolean;
     };
 
 const ERROR_TEXT: Partial<Record<ErrorCode, string>> = {
@@ -174,6 +207,10 @@ export function reducer(state: SignalingState, action: Action): SignalingState {
       };
     case "notice_dismissed":
       return { ...state, notice: null };
+    case "security_failed":
+      return { ...state, securityAlert: action.alert };
+    case "security_dismissed":
+      return { ...state, securityAlert: null };
     case "p2p_status": {
       if (state.active?.requestId !== action.requestId) return state;
       const p2p = { ...state.active.p2p };
@@ -181,6 +218,10 @@ export function reducer(state: SignalingState, action: Action): SignalingState {
       if (action.rttMs !== undefined) p2p.rttMs = action.rttMs;
       if (action.route !== undefined) p2p.route = action.route;
       if (action.sharing !== undefined) p2p.sharing = action.sharing;
+      if (action.control !== undefined) p2p.control = action.control;
+      if (action.verificationCode !== undefined) p2p.verificationCode = action.verificationCode;
+      if (action.authenticated !== undefined) p2p.authenticated = action.authenticated;
+      if (action.firstContact !== undefined) p2p.firstContact = action.firstContact;
       return { ...state, active: { ...state.active, p2p } };
     }
     case "message":

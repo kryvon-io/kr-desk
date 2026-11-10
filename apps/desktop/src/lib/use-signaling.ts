@@ -10,6 +10,7 @@ import {
   type ServerMessage,
 } from "@/lib/signaling-state";
 import type { MonitorInfo } from "@/lib/control";
+import type { SessionCrypto } from "@/lib/session-auth";
 import { cursorCss, rgbaToDataUrl } from "@/lib/pointer";
 import {
   ViewerPeer,
@@ -31,6 +32,28 @@ interface HostP2pStatus {
   rttMs: number | null;
   route: RouteInfo | null;
   sharing: boolean;
+  control: boolean;
+  verificationCode: string | null;
+  authenticated: boolean;
+  firstContact: boolean;
+  securityError: string | null;
+  peerId: string;
+}
+
+/** Assinatura e verificação pelo Rust (a chave do dispositivo fica lá). */
+function tauriSessionCrypto(peerId: string, expectedPublicKey: string): SessionCrypto {
+  return {
+    sign: (message) =>
+      invoke<{ publicKey: string; signature: string }>("sign_session", { message }),
+    verify: async (publicKey, signature, message) => {
+      const r = await invoke<
+        | { result: "ok"; firstContact: boolean }
+        | { result: "changed" }
+        | { result: "failed"; reason: string }
+      >("verify_session", { peerId, expectedPublicKey, publicKey, signature, message });
+      return r;
+    },
+  };
 }
 
 /** Converte o erro do `invoke` (string vinda do Rust) em texto. */
@@ -75,34 +98,61 @@ export function useSignaling() {
   }, []);
 
   const startViewer = useCallback(
-    (requestId: string, iceServers: IceServerDto[]) => {
+    (requestId: string, iceServers: IceServerDto[], peerId: string, peerPublicKey: string) => {
       closeViewer();
       const update = (patch: Omit<Extract<Action, { type: "p2p_status" }>, "type" | "requestId">) =>
         dispatch({ type: "p2p_status", requestId, ...patch });
-      const peer = new ViewerPeer(iceServers, {
-        onSignal: (payload) => {
-          invoke("send_signal", { requestId, payload }).catch((err: unknown) =>
-            console.warn("falha ao enviar sinal", err),
-          );
+      const peer = new ViewerPeer(
+        iceServers,
+        {
+          onSignal: (payload) => {
+            invoke("send_signal", { requestId, payload }).catch((err: unknown) =>
+              console.warn("falha ao enviar sinal", err),
+            );
+          },
+          onState: (s) => update({ state: s }),
+          onRtt: (ms) => update({ rttMs: ms }),
+          onRoute: (route) => update({ route }),
+          onVideo: (stream) => {
+            if (viewer.current?.peer === peer) setRemote({ peer, stream });
+          },
+          onVerificationCode: (code) => update({ verificationCode: code }),
+          onPermissions: (control) => update({ control }),
+          onAuth: (outcome) => {
+            if (outcome.result === "ok") {
+              update({ authenticated: true, firstContact: outcome.firstContact });
+              return;
+            }
+            // Não confiamos no outro lado: encerra a sessão antes de qualquer entrada.
+            dispatch({
+              type: "security_failed",
+              alert: {
+                peerId,
+                reason:
+                  outcome.result === "changed"
+                    ? "A identidade deste computador mudou desde a última conexão."
+                    : `Não foi possível confirmar a identidade do outro computador (${outcome.reason}).`,
+                keyChanged: outcome.result === "changed",
+              },
+            });
+            closeViewer(requestId);
+            dispatch({ type: "session_closed", requestId });
+            invoke("end_session", { requestId }).catch(() => undefined);
+          },
+          onMonitors: (list, active) => {
+            if (viewer.current?.peer === peer) setRemoteMonitors({ list, active });
+          },
+          onCursor: (msg) => {
+            if (msg.t === "cursor_shape") {
+              cursorShape.current = cursorCss(msg, rgbaToDataUrl) ?? "default";
+            } else {
+              cursorVisible.current = msg.visible;
+            }
+            setRemoteCursor(cursorVisible.current ? cursorShape.current : "none");
+          },
         },
-        onState: (s) => update({ state: s }),
-        onRtt: (ms) => update({ rttMs: ms }),
-        onRoute: (route) => update({ route }),
-        onVideo: (stream) => {
-          if (viewer.current?.peer === peer) setRemote({ peer, stream });
-        },
-        onMonitors: (list, active) => {
-          if (viewer.current?.peer === peer) setRemoteMonitors({ list, active });
-        },
-        onCursor: (msg) => {
-          if (msg.t === "cursor_shape") {
-            cursorShape.current = cursorCss(msg, rgbaToDataUrl) ?? "default";
-          } else {
-            cursorVisible.current = msg.visible;
-          }
-          setRemoteCursor(cursorVisible.current ? cursorShape.current : "none");
-        },
-      });
+        { auth: { requestId, crypto: tauriSessionCrypto(peerId, peerPublicKey) } },
+      );
       viewer.current = { requestId, peer };
       peer.start().catch((err: unknown) => {
         console.warn("falha ao iniciar a conexão P2P", err);
@@ -116,10 +166,11 @@ export function useSignaling() {
     if (!tauri) return;
     let disposed = false;
     const unlisten: Array<() => void> = [];
+    const reportedSecurity = new Set<string>();
 
     const onMessage = (msg: ServerMessage) => {
       if (msg.type === "connect_accepted" && msg.request_id === outgoingId.current) {
-        startViewer(msg.request_id, msg.ice_servers ?? []);
+        startViewer(msg.request_id, msg.ice_servers ?? [], msg.peer_id, msg.peer_public_key);
       } else if (msg.type === "signal" && msg.request_id === viewer.current?.requestId) {
         viewer.current.peer
           .handleSignal(msg.payload as SignalPayload)
@@ -144,8 +195,25 @@ export function useSignaling() {
             rttMs: e.payload.rttMs,
             route: e.payload.route,
             sharing: e.payload.sharing,
+            control: e.payload.control,
+            verificationCode: e.payload.verificationCode,
+            authenticated: e.payload.authenticated,
+            firstContact: e.payload.firstContact,
           }),
         ),
+        await listen<HostP2pStatus>("p2p-status", (e) => {
+          if (e.payload.securityError && !reportedSecurity.has(e.payload.requestId)) {
+            reportedSecurity.add(e.payload.requestId);
+            dispatch({
+              type: "security_failed",
+              alert: {
+                peerId: e.payload.peerId,
+                reason: `Sessão encerrada por segurança: ${e.payload.securityError}.`,
+                keyChanged: e.payload.securityError.includes("mudou"),
+              },
+            });
+          }
+        }),
       );
       // Busca o estado atual depois de assinar, para não perder transições.
       const current = await invoke<SignalingStatusDto>("signaling_status");
@@ -172,10 +240,10 @@ export function useSignaling() {
     }
   }, []);
 
-  const respond = useCallback(async (requestId: string, accept: boolean) => {
+  const respond = useCallback(async (requestId: string, accept: boolean, allowControl = true) => {
     dispatch({ type: "incoming_answered", requestId, accepted: accept });
     try {
-      await invoke("respond_request", { requestId, accept });
+      await invoke("respond_request", { requestId, accept, allowControl });
     } catch (err) {
       console.warn("falha ao responder pedido", err);
     }
@@ -194,6 +262,23 @@ export function useSignaling() {
     [closeViewer],
   );
 
+  /** Host: liga/desliga o controle remoto durante a sessão. */
+  const setSessionControl = useCallback((requestId: string, allow: boolean) => {
+    invoke("set_session_control", { requestId, allow }).catch((err: unknown) =>
+      console.warn("falha ao alterar permissão", err),
+    );
+  }, []);
+
+  /** Esquece a chave antiga do computador (ele foi reinstalado). */
+  const trustNewIdentity = useCallback(async (peerId: string) => {
+    try {
+      await invoke("forget_peer", { peerId });
+    } finally {
+      dispatch({ type: "security_dismissed" });
+    }
+  }, []);
+  const dismissSecurity = useCallback(() => dispatch({ type: "security_dismissed" }), []);
+
   const resetOutgoing = useCallback(() => dispatch({ type: "outgoing_reset" }), []);
   const dismissNotice = useCallback(() => dispatch({ type: "notice_dismissed" }), []);
 
@@ -207,6 +292,9 @@ export function useSignaling() {
     connectTo,
     respond,
     endSession,
+    setSessionControl,
+    trustNewIdentity,
+    dismissSecurity,
     resetOutgoing,
     dismissNotice,
   };

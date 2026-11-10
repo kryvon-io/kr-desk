@@ -4,7 +4,11 @@
 //! cada mensagem de texto é um `SignalPayload`, exceto `done`, que o viewer
 //! manda quando já mediu a latência, viu a rota e decodificou vídeo.
 //!
-//! Quando o canal P2P abre, transmite um padrão de teste em H.264 (OpenH264)
+//! Antes de qualquer vídeo, os dois lados trocam provas de identidade
+//! (fingerprints DTLS assinados). Com `KR_INTEROP_TAMPER=1`, o host assina um
+//! fingerprint falso — simula um intermediário — e o viewer deve recusar.
+//!
+//! Depois de autenticado, transmite um padrão de teste em H.264 (OpenH264)
 //! e um cursor. O viewer manda movimentos, um clique e uma tecla, que passam
 //! por um `InputController` com um destino que só registra.
 //! Imprime `LISTENING <porta>` ao subir e `INTEROP_OK ...` no sucesso. Sai com
@@ -17,10 +21,16 @@ use kr_codec_soft::OpenH264Encoder;
 use kr_core::input::{InputController, InputSink};
 use kr_core::media::pattern::TestPattern;
 use kr_core::media::{EncoderFactory, FrameSource, PipelineConfig, VideoEncoder};
+use kr_identity::{DeviceIdentity, verify_peer};
+use kr_proto::control::ControlMessage;
+use kr_proto::session::Role;
 use kr_transport::{HostPeer, PeerEvent, VideoStream};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
+
+/// Identificador da sessão de teste (o mesmo usado pela página).
+const RID: &str = "interop-session";
 
 /// Destino de entrada que só registra o que recebeu.
 #[derive(Default)]
@@ -84,6 +94,10 @@ async fn main() {
         let mut route: Option<kr_transport::Route> = None;
         let mut keyframe_requests = 0u32;
         let mut monitor_selected: Option<u32> = None;
+        let identity = DeviceIdentity::generate().expect("identidade");
+        let tamper = std::env::var("KR_INTEROP_TAMPER").is_ok_and(|v| v == "1");
+        let mut fingerprints: Option<(String, String)> = None;
+        let mut viewer_authenticated = false;
         let mut input = InputController::new(Recorder::default());
         let mut video: Option<VideoStream> = None;
 
@@ -94,6 +108,9 @@ async fn main() {
                         let (Some(rtt), Some(route)) = (rtt, route.as_ref()) else {
                             break Err("viewer terminou antes do host medir RTT/rota".to_string());
                         };
+                        if !viewer_authenticated {
+                            break Err("viewer não se autenticou".to_string());
+                        }
                         if monitor_selected != Some(1) {
                             break Err("viewer não trocou de monitor".to_string());
                         }
@@ -133,9 +150,26 @@ async fn main() {
                         sink.send(Message::text(serde_json::to_string(&s).unwrap())).await.expect("send");
                     }
                     PeerEvent::State(s) => eprintln!("estado: {s:?}"),
+                    PeerEvent::Fingerprints { local, remote } => {
+                        fingerprints = Some((local, remote));
+                    }
                     PeerEvent::ControlOpen => {
-                        if video.is_none() {
-                            video = Some(start_video(&host));
+                        let (local, remote) = fingerprints.clone().expect("fingerprints antes do canal");
+                        let signed_local = if tamper { "sha-256 00:11:22".to_string() } else { local };
+                        let sig = identity.sign_session(RID, Role::Host, &signed_local, &remote);
+                        host.send_control(&ControlMessage::Auth { pk: identity.public_key_b64(), sig }).await;
+                        host.send_control(&ControlMessage::Permissions { control: true }).await;
+                    }
+                    PeerEvent::PeerAuth { pk, sig } => {
+                        let (local, remote) = fingerprints.clone().expect("fingerprints");
+                        match verify_peer(&pk, &sig, RID, Role::Viewer, &remote, &local) {
+                            Ok(()) => {
+                                viewer_authenticated = true;
+                                if video.is_none() {
+                                    video = Some(start_video(&host));
+                                }
+                            }
+                            Err(err) => break Err(format!("viewer não autenticado: {err}")),
                         }
                     }
                     PeerEvent::Rtt(d) => rtt = Some(d),

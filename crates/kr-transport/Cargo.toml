@@ -23,6 +23,7 @@ webrtc.workspace = true
 rtc.workspace = true
 
 [dev-dependencies]
+kr-identity.workspace = true
 kr-codec-soft.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true

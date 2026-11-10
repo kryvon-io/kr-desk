@@ -124,6 +124,16 @@ pub enum ControlMessage {
     SelectMonitor {
         index: u32,
     },
+    /// Ambos: prova de identidade da sessão (ver [`crate::session`]).
+    /// `pk` = chave pública Ed25519 e `sig` = assinatura, ambas em base64url.
+    Auth {
+        pk: String,
+        sig: String,
+    },
+    /// Host → viewer: o que a sessão permite.
+    Permissions {
+        control: bool,
+    },
 }
 
 impl ControlMessage {

@@ -5,6 +5,7 @@ import { ConnectCard } from "@/components/connect-card";
 import { IncomingRequestDialog } from "@/components/incoming-request-dialog";
 import { MyIdCard } from "@/components/my-id-card";
 import { RemoteScreen } from "@/components/remote-screen";
+import { SecurityAlertDialog } from "@/components/security-alert-dialog";
 import { SessionBanner } from "@/components/session-banner";
 import { StatusBadge } from "@/components/status-badge";
 import { fetchAppInfo, type AppInfo } from "@/lib/app-info";
@@ -22,6 +23,9 @@ export default function App() {
     connectTo,
     respond,
     endSession,
+    setSessionControl,
+    trustNewIdentity,
+    dismissSecurity,
     resetOutgoing,
     dismissNotice,
   } = useSignaling();
@@ -52,6 +56,11 @@ export default function App() {
           onEnd={endSession}
         />
         <IncomingRequestDialog request={state.incoming[0]} onAnswer={respond} />
+        <SecurityAlertDialog
+          alert={state.securityAlert}
+          onClose={dismissSecurity}
+          onTrustNew={(peerId) => void trustNewIdentity(peerId)}
+        />
       </>
     );
   }
@@ -66,7 +75,13 @@ export default function App() {
         <StatusBadge status={state.status} />
       </header>
 
-      {state.active && <SessionBanner session={state.active} onEnd={endSession} />}
+      {state.active && (
+        <SessionBanner
+          session={state.active}
+          onEnd={endSession}
+          onToggleControl={setSessionControl}
+        />
+      )}
 
       {state.notice && (
         <div className="flex w-full max-w-md items-center justify-between gap-2 rounded-lg border bg-muted px-4 py-2 text-sm">
@@ -92,6 +107,11 @@ export default function App() {
       </div>
 
       <IncomingRequestDialog request={state.incoming[0]} onAnswer={respond} />
+      <SecurityAlertDialog
+        alert={state.securityAlert}
+        onClose={dismissSecurity}
+        onTrustNew={(peerId) => void trustNewIdentity(peerId)}
+      />
 
       <footer className="mt-auto flex items-center gap-2 text-xs text-muted-foreground">
         <ShieldCheck className="size-3.5" aria-hidden />

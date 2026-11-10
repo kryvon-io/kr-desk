@@ -16,6 +16,13 @@ import {
   type InputMessage,
   type MonitorInfo,
 } from "./control";
+import {
+  sdpFingerprint,
+  sessionMessage,
+  verificationCode,
+  type SessionCrypto,
+  type VerifyOutcome,
+} from "./session-auth";
 
 /** Formato de `payload` de `signal` (igual a `kr_transport::SignalPayload`). */
 export type SignalPayload =
@@ -50,15 +57,30 @@ export interface ViewerPeerEvents {
   onCursor?: (msg: Extract<ControlMessage, { t: "cursor_shape" | "cursor_visible" }>) => void;
   /** Monitores do host e qual está sendo transmitido. */
   onMonitors?: (list: MonitorInfo[], active: number) => void;
+  /** Código de verificação da sessão (6 dígitos). */
+  onVerificationCode?: (code: string) => void;
+  /** Resultado da verificação da identidade do host. */
+  onAuth?: (outcome: VerifyOutcome) => void;
+  /** O host permitiu (ou não) o controle de mouse e teclado. */
+  onPermissions?: (control: boolean) => void;
+}
+
+/** Autenticação da sessão (obrigatória no app). */
+export interface ViewerAuth {
+  requestId: string;
+  crypto: SessionCrypto;
 }
 
 const PING_INTERVAL_MS = 1000;
+/** Prazo para o host provar a identidade depois que o canal abre. */
+const AUTH_TIMEOUT_MS = 10_000;
 
 export class ViewerPeer {
   readonly pc: RTCPeerConnection;
   private readonly control: RTCDataChannel;
   private readonly input: RTCDataChannel;
   readonly video: RTCRtpTransceiver;
+  private readonly auth: ViewerAuth | null;
   private readonly timers: ReturnType<typeof setInterval>[] = [];
   private seq = 1;
   private inFlight: { n: number; at: number } | null = null;
@@ -66,12 +88,17 @@ export class ViewerPeer {
   private lastRouteKey = "";
   private lastSentRouteKey = "";
   private closed = false;
+  /** Host verificado: só então mouse/teclado podem ser enviados. */
+  private authenticated = false;
+  private authDone = false;
+  private controlAllowed = false;
 
   constructor(
     iceServers: IceServerDto[],
     private readonly events: ViewerPeerEvents,
-    options: { forceRelay?: boolean } = {},
+    options: { forceRelay?: boolean; auth?: ViewerAuth } = {},
   ) {
+    this.auth = options.auth ?? null;
     this.pc = new RTCPeerConnection({
       iceServers,
       ...(options.forceRelay ? { iceTransportPolicy: "relay" as const } : {}),
@@ -100,6 +127,7 @@ export class ViewerPeer {
 
     this.control.onopen = () => {
       this.events.onControlOpen?.();
+      void this.startAuth();
       void this.reportRoute();
       this.timers.push(setInterval(() => this.ping(), PING_INTERVAL_MS));
       // A rota pode mudar (ex.: de relay para direta); reavalia periodicamente.
@@ -140,8 +168,92 @@ export class ViewerPeer {
     }
   }
 
+  /** Fingerprints (nosso, do host) vistos nas descrições SDP. */
+  private fingerprints(): { local: string; remote: string } | null {
+    const local = sdpFingerprint(this.pc.localDescription?.sdp);
+    const remote = sdpFingerprint(this.pc.remoteDescription?.sdp);
+    return local && remote ? { local, remote } : null;
+  }
+
+  private failAuth(outcome: VerifyOutcome) {
+    if (this.authDone) return;
+    this.authDone = true;
+    this.authenticated = false;
+    this.events.onAuth?.(outcome);
+  }
+
+  /** Envia nossa prova e aguarda a do host. */
+  private async startAuth() {
+    if (!this.auth) {
+      // Sem autenticação configurada (testes de transporte): segue sem ela.
+      this.authenticated = true;
+      this.authDone = true;
+      return;
+    }
+    const fps = this.fingerprints();
+    if (!fps) {
+      this.failAuth({ result: "failed", reason: "conexão sem fingerprint DTLS" });
+      return;
+    }
+    this.events.onVerificationCode?.(
+      await verificationCode(this.auth.requestId, fps.local, fps.remote),
+    );
+    try {
+      const proof = await this.auth.crypto.sign(
+        sessionMessage(this.auth.requestId, "viewer", fps.local, fps.remote),
+      );
+      if (this.control.readyState === "open") {
+        this.control.send(JSON.stringify({ t: "auth", pk: proof.publicKey, sig: proof.signature }));
+      }
+    } catch (err) {
+      this.failAuth({ result: "failed", reason: `não foi possível assinar: ${String(err)}` });
+      return;
+    }
+    this.timers.push(
+      setTimeout(() => {
+        if (!this.authDone) {
+          this.failAuth({
+            result: "failed",
+            reason: "o outro computador não comprovou a identidade",
+          });
+        }
+      }, AUTH_TIMEOUT_MS) as unknown as ReturnType<typeof setInterval>,
+    );
+  }
+
+  private async verifyHost(pk: string, sig: string) {
+    if (!this.auth || this.authDone) return;
+    const fps = this.fingerprints();
+    if (!fps) return;
+    let outcome: VerifyOutcome;
+    try {
+      outcome = await this.auth.crypto.verify(
+        pk,
+        sig,
+        sessionMessage(this.auth.requestId, "host", fps.remote, fps.local),
+      );
+    } catch (err) {
+      outcome = { result: "failed", reason: String(err) };
+    }
+    if (outcome.result === "ok") {
+      this.authenticated = true;
+      this.authDone = true;
+      this.events.onAuth?.(outcome);
+    } else {
+      this.failAuth(outcome);
+    }
+  }
+
+  /** O host foi verificado (vídeo e entrada liberados). */
+  get isAuthenticated(): boolean {
+    return this.authenticated;
+  }
+
   /** Envia entrada ao host. Movimentos vão pelo canal não confiável. */
   sendInput(msg: InputMessage): boolean {
+    // Nada de teclas (senhas!) para um host não verificado ou sem permissão.
+    if (!this.authenticated) return false;
+    if (!this.controlAllowed && msg.t !== "release_all") return false;
     const channel =
       msg.t === "mouse_move" && this.input.readyState === "open" ? this.input : this.control;
     if (channel.readyState !== "open") return false;
@@ -169,6 +281,12 @@ export class ViewerPeer {
       this.events.onCursor?.(msg);
     } else if (msg.t === "monitors") {
       this.events.onMonitors?.(msg.list, msg.active);
+    } else if (msg.t === "auth") {
+      // O SDP já está aplicado quando o canal abre: dá para verificar já.
+      void this.verifyHost(msg.pk, msg.sig);
+    } else if (msg.t === "permissions") {
+      this.controlAllowed = msg.control;
+      this.events.onPermissions?.(msg.control);
     }
   }
 
@@ -196,7 +314,7 @@ export class ViewerPeer {
   }
 
   private stopTimers() {
-    this.timers.splice(0).forEach(clearInterval);
+    this.timers.splice(0).forEach((t) => clearInterval(t));
   }
 
   close() {

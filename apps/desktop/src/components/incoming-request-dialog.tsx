@@ -17,12 +17,13 @@ export const DECISION_SECONDS = 30;
 
 interface Props {
   request: IncomingRequest | undefined;
-  onAnswer: (requestId: string, accept: boolean) => void;
+  onAnswer: (requestId: string, accept: boolean, allowControl?: boolean) => void;
 }
 
 /** Pede autorização ao usuário deste computador. Sem resposta, recusa sozinho. */
 export function IncomingRequestDialog({ request, onAnswer }: Props) {
   const [now, setNow] = useState(() => Date.now());
+  const [allowControl, setAllowControl] = useState(true);
 
   useEffect(() => {
     if (!request) return;
@@ -59,11 +60,25 @@ export function IncomingRequestDialog({ request, onAnswer }: Props) {
               computador. Só aceite se você conhece e confia nesta pessoa.
             </DialogDescription>
           </DialogHeader>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 size-4 accent-primary"
+              checked={allowControl}
+              onChange={(e) => setAllowControl(e.target.checked)}
+            />
+            <span>
+              Permitir controle do mouse e do teclado
+              <span className="block text-xs text-muted-foreground">
+                Desmarcado, a pessoa só vê a tela. Dá para mudar durante a sessão.
+              </span>
+            </span>
+          </label>
           <DialogFooter>
             <Button variant="outline" onClick={() => onAnswer(request.requestId, false)}>
               Recusar ({remaining}s)
             </Button>
-            <Button onClick={() => onAnswer(request.requestId, true)}>Aceitar</Button>
+            <Button onClick={() => onAnswer(request.requestId, true, allowControl)}>Aceitar</Button>
           </DialogFooter>
         </DialogContent>
       )}

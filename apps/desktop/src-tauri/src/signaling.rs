@@ -2,13 +2,13 @@
 
 use std::sync::{Arc, Mutex};
 
-use kr_identity::DeviceIdentity;
+use kr_identity::{DeviceIdentity, KnownPeers};
 use kr_proto::ServerMessage;
 use kr_signaling::{ConnectionStatus, SignalingConfig, SignalingEvent, SignalingHandle};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, UserAttentionType};
 
-use crate::p2p::P2pManager;
+use crate::p2p::{P2pManager, ViewerInfo};
 
 /// Evento com o estado da conexão (payload: [`StatusDto`]).
 pub const EVENT_STATUS: &str = "signaling-status";
@@ -69,16 +69,20 @@ fn server_url() -> String {
     std::env::var("KR_DESK_SIGNALING_URL").unwrap_or_else(|_| kr_signaling::DEFAULT_URL.to_string())
 }
 
-pub fn start(app: AppHandle, identity: Arc<DeviceIdentity>) -> Bridge {
+pub fn start(
+    app: AppHandle,
+    identity: Arc<DeviceIdentity>,
+    known: Arc<Mutex<KnownPeers>>,
+) -> Bridge {
     let device_name = device_name();
     let config = SignalingConfig::new(server_url(), device_name.clone(), env!("CARGO_PKG_VERSION"));
 
     // O cliente usa `tokio::spawn`; entra no runtime do Tauri para iniciá-lo.
     let rt = tauri::async_runtime::handle();
     let _guard = rt.inner().enter();
-    let (handle, mut events) = kr_signaling::spawn(config, identity);
+    let (handle, mut events) = kr_signaling::spawn(config, identity.clone());
 
-    let p2p = Arc::new(P2pManager::default());
+    let p2p = Arc::new(P2pManager::new(identity, known));
     let (app_for_task, handle_for_task, p2p_for_task) = (app.clone(), handle.clone(), p2p.clone());
     tauri::async_runtime::spawn(async move {
         while let Some(event) = events.recv().await {
@@ -102,7 +106,8 @@ pub fn start(app: AppHandle, identity: Arc<DeviceIdentity>) -> Bridge {
                         ServerMessage::SessionReady {
                             request_id,
                             ice_servers,
-                            ..
+                            peer_id,
+                            peer_public_key,
                         } => {
                             // Aceitamos o pedido: este computador é o host da conexão P2P.
                             let (app, handle, p2p) = (
@@ -111,8 +116,12 @@ pub fn start(app: AppHandle, identity: Arc<DeviceIdentity>) -> Bridge {
                                 p2p_for_task.clone(),
                             );
                             let (rid, ice) = (request_id.clone(), ice_servers.clone());
+                            let viewer = ViewerInfo {
+                                peer_id: peer_id.clone(),
+                                public_key: peer_public_key.clone(),
+                            };
                             tauri::async_runtime::spawn(async move {
-                                p2p.start_host(app, handle, rid, ice).await;
+                                p2p.start_host(app, handle, rid, ice, viewer).await;
                             });
                         }
                         ServerMessage::Signal {

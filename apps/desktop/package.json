@@ -1,7 +1,7 @@
 {
   "name": "@kr-desk/desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
@@ -9,9 +9,11 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "vitest run"
   },
   "dependencies": {
+    "@radix-ui/react-dialog": "catalog:",
     "@radix-ui/react-slot": "catalog:",
     "@tauri-apps/api": "catalog:",
     "class-variance-authority": "catalog:",
@@ -31,6 +33,7 @@
     "tailwindcss": "catalog:",
     "tw-animate-css": "catalog:",
     "typescript": "catalog:",
-    "vite": "catalog:"
+    "vite": "catalog:",
+    "vitest": "catalog:"
   }
 }

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "KR Desk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.krdesk.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -28,7 +28,7 @@
     "active": true,
     "targets": ["nsis"],
     "publisher": "KR Desk",
-    "copyright": "© KR Desk contributors — AGPL-3.0-only",
+    "copyright": "\u00a9 KR Desk contributors \u2014 AGPL-3.0-only",
     "category": "Utility",
     "shortDescription": "Acesso remoto seguro",
     "icon": [
@@ -39,7 +39,9 @@
       "icons/icon.ico"
     ],
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper" },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
       "nsis": {
         "installMode": "currentUser",
         "languages": ["PortugueseBR", "English"],

@@ -117,6 +117,8 @@ pub enum PeerEvent {
     ControlOpen,
     /// O viewer pediu um keyframe (PLI/FIR no RTCP ou `keyframe` no controle).
     KeyframeRequest,
+    /// O viewer pediu para transmitir outro monitor.
+    SelectMonitor(u32),
     /// Entrada remota (mouse/teclado) do viewer. Ao fechar o canal de
     /// controle, chega um `ReleaseAll`.
     Input(ControlMessage),
@@ -311,6 +313,9 @@ async fn control_loop(dc: Arc<dyn DataChannel>, shared: Arc<Shared>) {
                         }));
                     }
                     Ok(ControlMessage::Keyframe) => shared.emit(PeerEvent::KeyframeRequest),
+                    Ok(ControlMessage::SelectMonitor { index }) => {
+                        shared.emit(PeerEvent::SelectMonitor(index));
+                    }
                     Ok(msg) if is_input(&msg) => shared.emit(PeerEvent::Input(msg)),
                     Ok(other) => debug!(?other, "mensagem de controle ignorada"),
                     Err(err) => debug!(%err, "mensagem de controle desconhecida"),

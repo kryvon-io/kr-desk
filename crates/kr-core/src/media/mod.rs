@@ -106,6 +106,42 @@ pub enum CursorUpdate {
     Visible(bool),
 }
 
+/// Retângulo na área de trabalho virtual do Windows (pixels físicos; o
+/// monitor principal começa em 0,0 e os outros podem ter coordenadas
+/// negativas).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DesktopRect {
+    pub left: i32,
+    pub top: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Monitor disponível para captura.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MonitorInfo {
+    /// Posição na lista (estável enquanto a configuração de telas não mudar).
+    pub index: u32,
+    pub name: String,
+    pub rect: DesktopRect,
+    pub primary: bool,
+}
+
+/// Área da tela transmitida, compartilhada entre a captura (que a define) e
+/// a entrada remota (que mira nela). `None` = monitor principal.
+pub type SharedArea = std::sync::Arc<std::sync::Mutex<Option<DesktopRect>>>;
+
+/// Eventos da fonte de captura, além dos quadros.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceEvent {
+    Cursor(CursorUpdate),
+    /// Lista de monitores e qual está sendo capturado.
+    Monitors {
+        list: Vec<MonitorInfo>,
+        active: u32,
+    },
+}
+
 /// Fonte de quadros da tela. Não exige `Send`: implementações com COM/DXGI
 /// são criadas e usadas na própria thread do pipeline (ver [`SourceFactory`]).
 pub trait FrameSource {
@@ -116,9 +152,16 @@ pub trait FrameSource {
     /// Nome para logs (ex.: "DXGI Desktop Duplication").
     fn name(&self) -> String;
 
-    /// Próxima mudança do cursor observada desde a última chamada.
-    fn take_cursor(&mut self) -> Option<CursorUpdate> {
+    /// Próximo evento (cursor, monitores) observado desde a última chamada.
+    fn take_event(&mut self) -> Option<SourceEvent> {
         None
+    }
+
+    /// Passa a capturar outro monitor (índice de [`MonitorInfo`]).
+    fn select_monitor(&mut self, index: u32) -> Result<(), CaptureError> {
+        Err(CaptureError::Transient(format!(
+            "esta fonte não troca de monitor ({index})"
+        )))
     }
 }
 

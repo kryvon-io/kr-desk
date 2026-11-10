@@ -12,7 +12,29 @@ export type ControlMessage =
   | { t: "route"; local: CandidateType; remote: CandidateType; protocol: string }
   | { t: "keyframe" }
   | { t: "cursor_shape"; w: number; h: number; hx: number; hy: number; rgba: string }
-  | { t: "cursor_visible"; visible: boolean };
+  | { t: "cursor_visible"; visible: boolean }
+  | { t: "monitors"; list: MonitorInfo[]; active: number };
+
+/** Monitor do host disponível para transmissão. */
+export interface MonitorInfo {
+  index: number;
+  name: string;
+  width: number;
+  height: number;
+  primary: boolean;
+}
+
+function isMonitor(v: unknown): v is MonitorInfo {
+  if (typeof v !== "object" || v === null) return false;
+  const m = v as Record<string, unknown>;
+  return (
+    typeof m.index === "number" &&
+    typeof m.name === "string" &&
+    typeof m.width === "number" &&
+    typeof m.height === "number" &&
+    typeof m.primary === "boolean"
+  );
+}
 
 export type MouseButton = "left" | "right" | "middle" | "x1" | "x2";
 
@@ -54,6 +76,14 @@ export function parseControl(raw: string): ControlMessage | null {
     typeof o.rgba === "string"
   ) {
     return { t: "cursor_shape", w: o.w, h: o.h, hx: o.hx, hy: o.hy, rgba: o.rgba };
+  }
+  if (
+    o.t === "monitors" &&
+    Array.isArray(o.list) &&
+    o.list.every(isMonitor) &&
+    typeof o.active === "number"
+  ) {
+    return { t: "monitors", list: o.list, active: o.active };
   }
   if (o.t === "cursor_visible" && typeof o.visible === "boolean") {
     return { t: "cursor_visible", visible: o.visible };

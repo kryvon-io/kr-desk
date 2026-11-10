@@ -48,7 +48,14 @@ pub type HostSink = kr_input_win::SendInputSink;
 #[cfg(not(windows))]
 pub type HostSink = LogSink;
 
-pub fn host_controller() -> InputController<HostSink> {
+/// Controlador do host; `area` diz qual monitor está sendo transmitido.
+#[cfg(windows)]
+pub fn host_controller(area: kr_core::media::SharedArea) -> InputController<HostSink> {
+    InputController::new(HostSink::new(area))
+}
+
+#[cfg(not(windows))]
+pub fn host_controller(_area: kr_core::media::SharedArea) -> InputController<HostSink> {
     InputController::new(HostSink::default())
 }
 

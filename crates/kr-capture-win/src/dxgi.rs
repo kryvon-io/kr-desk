@@ -12,7 +12,9 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use kr_core::media::{BgraFrame, CaptureError, CursorUpdate, FrameSource};
+use kr_core::media::{
+    BgraFrame, CaptureError, CursorUpdate, DesktopRect, FrameSource, MonitorInfo, SourceEvent,
+};
 use tracing::{info, warn};
 use windows::Win32::Foundation::{E_ACCESSDENIED, HMODULE};
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_UNKNOWN;
@@ -65,15 +67,15 @@ struct Session {
 }
 
 impl Session {
-    /// Abre o monitor principal (o que contém a origem `(0, 0)` da área de
-    /// trabalho).
-    fn open_primary() -> Result<Self, CaptureError> {
+    /// Lista os monitores ligados à área de trabalho: o principal primeiro,
+    /// depois da esquerda para a direita.
+    fn enumerate() -> Result<Vec<(IDXGIAdapter1, IDXGIOutput1, MonitorInfo)>, CaptureError> {
+        let mut found = Vec::new();
         // SAFETY: chamadas COM/DXGI comuns; os objetos retornados são
         // gerenciados pelos wrappers do `windows` (Release no Drop).
         unsafe {
             let factory: IDXGIFactory1 =
                 CreateDXGIFactory1().map_err(|e| map_err("CreateDXGIFactory1", e))?;
-            let mut fallback: Option<(IDXGIAdapter1, IDXGIOutput1, String)> = None;
             let mut adapter_index = 0;
             while let Ok(adapter) = factory.EnumAdapters1(adapter_index) {
                 adapter_index += 1;
@@ -91,21 +93,44 @@ impl Session {
                         .trim_end_matches('\0')
                         .to_string();
                     let r = desc.DesktopCoordinates;
-                    if r.left == 0 && r.top == 0 {
-                        return Self::open(&adapter, &output1, name);
-                    }
-                    if fallback.is_none() {
-                        fallback = Some((adapter.clone(), output1, name));
-                    }
+                    let info = MonitorInfo {
+                        index: 0,
+                        name,
+                        rect: DesktopRect {
+                            left: r.left,
+                            top: r.top,
+                            width: (r.right - r.left).max(0) as u32,
+                            height: (r.bottom - r.top).max(0) as u32,
+                        },
+                        primary: r.left == 0 && r.top == 0,
+                    };
+                    found.push((adapter.clone(), output1, info));
                 }
             }
-            match fallback {
-                Some((adapter, output, name)) => Self::open(&adapter, &output, name),
-                None => Err(CaptureError::Transient(
-                    "nenhum monitor ligado à área de trabalho".into(),
-                )),
-            }
         }
+        found.sort_by_key(|(_, _, m)| (!m.primary, m.rect.left, m.rect.top));
+        for (i, (_, _, m)) in found.iter_mut().enumerate() {
+            m.index = i as u32;
+        }
+        Ok(found)
+    }
+
+    /// Abre o monitor `selected` (ou o principal). Devolve também a lista de
+    /// monitores e o índice aberto.
+    fn open_selected(selected: Option<u32>) -> Result<(Self, Vec<MonitorInfo>, u32), CaptureError> {
+        let outputs = Self::enumerate()?;
+        let chosen = selected
+            .and_then(|i| outputs.iter().position(|(_, _, m)| m.index == i))
+            .unwrap_or(0);
+        let Some((adapter, output, info)) = outputs.get(chosen) else {
+            return Err(CaptureError::Transient(
+                "nenhum monitor ligado à área de trabalho".into(),
+            ));
+        };
+        let session = Self::open(adapter, output, info.name.clone())?;
+        let active = info.index;
+        let list = outputs.into_iter().map(|(_, _, m)| m).collect();
+        Ok((session, list, active))
     }
 
     fn open(
@@ -241,13 +266,15 @@ pub(crate) fn pointer_to_rgba(
     Some((width, height, out))
 }
 
-/// Captura do monitor principal.
+/// Captura de um monitor (o principal, até que outro seja escolhido).
 pub struct DxgiCapture {
     session: Option<Session>,
+    /// Monitor escolhido pelo viewer (`None` = principal).
+    selected: Option<u32>,
     frame: BgraFrame,
     has_frame: bool,
     cursor_visible: Option<bool>,
-    cursor_updates: VecDeque<CursorUpdate>,
+    events: VecDeque<SourceEvent>,
     shape_buffer: Vec<u8>,
 }
 
@@ -255,23 +282,35 @@ impl DxgiCapture {
     /// Abre a captura do monitor principal. Deve ser criado na thread que
     /// vai capturar (objetos COM).
     pub fn primary() -> Result<Self, CaptureError> {
-        let session = Session::open_primary()?;
-        info!(monitor = %session.output_name, "captura DXGI aberta");
-        Ok(Self {
-            session: Some(session),
+        let mut capture = Self {
+            session: None,
+            selected: None,
             frame: BgraFrame::new(2, 2),
             has_frame: false,
             cursor_visible: None,
-            cursor_updates: VecDeque::new(),
+            events: VecDeque::new(),
             shape_buffer: Vec::new(),
-        })
+        };
+        capture.reopen()?;
+        Ok(capture)
+    }
+
+    /// (Re)abre o monitor escolhido e avisa a lista de monitores.
+    fn reopen(&mut self) -> Result<(), CaptureError> {
+        self.session = None;
+        let (session, list, active) = Session::open_selected(self.selected)?;
+        info!(monitor = %session.output_name, active, total = list.len(), "captura DXGI aberta");
+        self.session = Some(session);
+        self.has_frame = false;
+        self.cursor_visible = None;
+        self.events
+            .push_back(SourceEvent::Monitors { list, active });
+        Ok(())
     }
 
     fn session(&mut self) -> Result<&mut Session, CaptureError> {
         if self.session.is_none() {
-            let session = Session::open_primary()?;
-            info!(monitor = %session.output_name, "captura DXGI reaberta");
-            self.session = Some(session);
+            self.reopen()?;
         }
         Ok(self.session.as_mut().expect("aberta acima"))
     }
@@ -288,8 +327,8 @@ impl DxgiCapture {
         let visible = info.PointerPosition.Visible.as_bool();
         if self.cursor_visible != Some(visible) {
             self.cursor_visible = Some(visible);
-            self.cursor_updates
-                .push_back(CursorUpdate::Visible(visible));
+            self.events
+                .push_back(SourceEvent::Cursor(CursorUpdate::Visible(visible)));
         }
         if info.PointerShapeBufferSize == 0 {
             return;
@@ -318,13 +357,14 @@ impl DxgiCapture {
             shape.Pitch,
             &self.shape_buffer,
         ) {
-            self.cursor_updates.push_back(CursorUpdate::Shape {
-                width,
-                height,
-                hot_x: shape.HotSpot.x.max(0) as u32,
-                hot_y: shape.HotSpot.y.max(0) as u32,
-                rgba,
-            });
+            self.events
+                .push_back(SourceEvent::Cursor(CursorUpdate::Shape {
+                    width,
+                    height,
+                    hot_x: shape.HotSpot.x.max(0) as u32,
+                    hot_y: shape.HotSpot.y.max(0) as u32,
+                    rgba,
+                }));
         }
     }
 
@@ -430,8 +470,20 @@ impl FrameSource for DxgiCapture {
         }
     }
 
-    fn take_cursor(&mut self) -> Option<CursorUpdate> {
-        self.cursor_updates.pop_front()
+    fn take_event(&mut self) -> Option<SourceEvent> {
+        self.events.pop_front()
+    }
+
+    fn select_monitor(&mut self, index: u32) -> Result<(), CaptureError> {
+        let previous = self.selected;
+        self.selected = Some(index);
+        if let Err(err) = self.reopen() {
+            // Volta ao monitor anterior; se nem ele abrir, a próxima captura tenta de novo.
+            self.selected = previous;
+            let _ = self.reopen();
+            return Err(err);
+        }
+        Ok(())
     }
 
     fn name(&self) -> String {

@@ -5,13 +5,13 @@
 //! termina.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
 
 use super::{
-    CaptureError, CursorUpdate, EncodeError, EncoderConfig, FrameSource, Nv12Frame, VideoEncoder,
+    CaptureError, EncodeError, EncoderConfig, FrameSource, Nv12Frame, SourceEvent, VideoEncoder,
     bgra_to_nv12, fit_within, is_keyframe,
 };
 
@@ -50,10 +50,24 @@ impl Default for PipelineConfig {
 }
 
 /// Sinais externos para o loop (thread-safe).
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PipelineControl {
     keyframe: AtomicBool,
     stop: AtomicBool,
+    /// Monitor pedido (`NO_MONITOR` = nenhum pedido pendente).
+    monitor: AtomicU32,
+}
+
+const NO_MONITOR: u32 = u32::MAX;
+
+impl Default for PipelineControl {
+    fn default() -> Self {
+        Self {
+            keyframe: AtomicBool::new(false),
+            stop: AtomicBool::new(false),
+            monitor: AtomicU32::new(NO_MONITOR),
+        }
+    }
 }
 
 impl PipelineControl {
@@ -68,6 +82,18 @@ impl PipelineControl {
 
     pub fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
+    }
+
+    /// Pede a troca para outro monitor no próximo quadro.
+    pub fn request_monitor(&self, index: u32) {
+        self.monitor.store(index, Ordering::Relaxed);
+    }
+
+    fn take_monitor(&self) -> Option<u32> {
+        match self.monitor.swap(NO_MONITOR, Ordering::Relaxed) {
+            NO_MONITOR => None,
+            index => Some(index),
+        }
     }
 
     pub fn is_stopped(&self) -> bool {
@@ -128,7 +154,7 @@ pub fn run_pipeline(
     config: PipelineConfig,
     control: Arc<PipelineControl>,
     mut sink: impl FnMut(EncodedFrame) -> bool,
-    mut on_cursor: impl FnMut(CursorUpdate),
+    mut on_event: impl FnMut(SourceEvent),
 ) -> Result<PipelineStats, PipelineError> {
     let frame_interval = Duration::from_secs(1) / config.fps.max(1);
     let mut stats = PipelineStats::default();
@@ -147,9 +173,18 @@ pub fn run_pipeline(
             std::thread::sleep(next_capture - now);
         }
         let iteration = Instant::now();
-        // Mudanças do cursor vistas na captura anterior.
-        while let Some(update) = source.take_cursor() {
-            on_cursor(update);
+        if let Some(index) = control.take_monitor() {
+            match source.select_monitor(index) {
+                Ok(()) => {
+                    info!(index, "monitor trocado");
+                    control.request_keyframe();
+                }
+                Err(err) => warn!(%err, index, "não foi possível trocar de monitor"),
+            }
+        }
+        // Eventos (cursor, monitores) vistos na captura anterior.
+        while let Some(event) = source.take_event() {
+            on_event(event);
         }
 
         let captured = match source.capture(POLL) {
@@ -414,6 +449,48 @@ mod tests {
             |_| {},
         );
         assert_eq!(keys, vec![true, true]);
+    }
+
+    #[test]
+    fn troca_de_monitor_recria_encoder_e_avisa() {
+        let created = Arc::new(Mutex::new(Vec::new()));
+        let log = created.clone();
+        let factory: EncoderFactory = Box::new(move |cfg| {
+            log.lock().unwrap().push((cfg.width, cfg.height));
+            Ok(Box::new(Fake {
+                log: Arc::default(),
+            }))
+        });
+        let source = Box::new(crate::media::pattern::TestPattern::with_monitors(
+            &[(32, 16), (16, 8)],
+            1000,
+        ));
+        let control = PipelineControl::new();
+        let c = control.clone();
+        let mut frames = 0;
+        let mut actives = Vec::new();
+        run_pipeline(
+            source,
+            factory,
+            fast(),
+            control,
+            |f| {
+                frames += 1;
+                if frames == 2 {
+                    c.request_monitor(1);
+                }
+                frames < 5 && !(f.width == 16 && f.keyframe)
+            },
+            |e| {
+                if let SourceEvent::Monitors { active, list } = e {
+                    assert_eq!(list.len(), 2);
+                    actives.push(active);
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(*created.lock().unwrap(), vec![(32, 16), (16, 8)]);
+        assert_eq!(actives, vec![0, 1]);
     }
 
     #[test]

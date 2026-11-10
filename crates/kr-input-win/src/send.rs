@@ -1,4 +1,5 @@
 use kr_core::input::InputSink;
+use kr_core::media::{DesktopRect, SharedArea};
 use kr_proto::control::{MouseButton, NormCoord};
 use tracing::{info, warn};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -19,20 +20,20 @@ const EXTRA_INFO: usize = 0x4B52_4445; // "KRDE"
 const XBUTTON1: u32 = 1;
 const XBUTTON2: u32 = 2;
 
-/// Converte a posição normalizada na tela principal para a coordenada
-/// absoluta (0–65535) da área de trabalho virtual.
+/// Converte a posição normalizada no monitor transmitido (`target`) para a
+/// coordenada absoluta (0–65535) da área de trabalho virtual.
 fn to_virtual_desk(
     x: NormCoord,
     y: NormCoord,
-    primary: (i32, i32),
+    target: DesktopRect,
     virtual_desk: (i32, i32, i32, i32),
 ) -> (i32, i32) {
-    let (pw, ph) = (primary.0.max(1) as i64, primary.1.max(1) as i64);
+    let (tw, th) = (target.width.max(1) as i64, target.height.max(1) as i64);
     let (vx, vy, vw, vh) = virtual_desk;
     let (vw, vh) = ((vw as i64).max(2), (vh as i64).max(2));
-    // Pixel no monitor principal (que começa em 0,0 na área virtual).
-    let px = x as i64 * (pw - 1) / 65535;
-    let py = y as i64 * (ph - 1) / 65535;
+    // Pixel na área virtual.
+    let px = target.left as i64 + x as i64 * (tw - 1) / 65535;
+    let py = target.top as i64 + y as i64 * (th - 1) / 65535;
     let ax = (px - vx as i64) * 65535 / (vw - 1);
     let ay = (py - vy as i64) * 65535 / (vh - 1);
     (ax.clamp(0, 65535) as i32, ay.clamp(0, 65535) as i32)
@@ -48,11 +49,17 @@ fn metric(index: windows::Win32::UI::WindowsAndMessaging::SYSTEM_METRICS_INDEX) 
 pub struct SendInputSink {
     failures: u32,
     keys: u32,
+    /// Monitor transmitido; `None` = principal.
+    area: SharedArea,
 }
 
 impl SendInputSink {
-    pub fn new() -> Self {
-        Self::default()
+    /// `area` é atualizada pela captura ao trocar de monitor.
+    pub fn new(area: SharedArea) -> Self {
+        Self {
+            area,
+            ..Self::default()
+        }
     }
 
     fn send(&mut self, inputs: &[INPUT]) {
@@ -89,14 +96,24 @@ impl SendInputSink {
 
 impl InputSink for SendInputSink {
     fn move_to(&mut self, x: NormCoord, y: NormCoord) {
-        let primary = (metric(SM_CXSCREEN), metric(SM_CYSCREEN));
+        let target = self
+            .area
+            .lock()
+            .ok()
+            .and_then(|a| *a)
+            .unwrap_or(DesktopRect {
+                left: 0,
+                top: 0,
+                width: metric(SM_CXSCREEN).max(1) as u32,
+                height: metric(SM_CYSCREEN).max(1) as u32,
+            });
         let desk = (
             metric(SM_XVIRTUALSCREEN),
             metric(SM_YVIRTUALSCREEN),
             metric(SM_CXVIRTUALSCREEN),
             metric(SM_CYVIRTUALSCREEN),
         );
-        let (ax, ay) = to_virtual_desk(x, y, primary, desk);
+        let (ax, ay) = to_virtual_desk(x, y, target, desk);
         self.mouse(
             ax,
             ay,
@@ -160,25 +177,43 @@ impl InputSink for SendInputSink {
 #[cfg(test)]
 mod tests {
     use super::to_virtual_desk;
+    use kr_core::media::DesktopRect;
+
+    fn rect(left: i32, top: i32, width: u32, height: u32) -> DesktopRect {
+        DesktopRect {
+            left,
+            top,
+            width,
+            height,
+        }
+    }
 
     #[test]
     fn monitor_unico() {
         let desk = (0, 0, 1920, 1080);
-        assert_eq!(to_virtual_desk(0, 0, (1920, 1080), desk), (0, 0));
-        assert_eq!(
-            to_virtual_desk(65535, 65535, (1920, 1080), desk),
-            (65535, 65535)
-        );
+        let primary = rect(0, 0, 1920, 1080);
+        assert_eq!(to_virtual_desk(0, 0, primary, desk), (0, 0));
+        assert_eq!(to_virtual_desk(65535, 65535, primary, desk), (65535, 65535));
     }
 
     #[test]
-    fn segundo_monitor_a_esquerda() {
+    fn principal_com_secundario_a_esquerda() {
         // Monitor secundário de 1280 px à esquerda do principal.
         let desk = (-1280, 0, 3200, 1080);
-        let (x, _) = to_virtual_desk(0, 0, (1920, 1080), desk);
+        let (x, _) = to_virtual_desk(0, 0, rect(0, 0, 1920, 1080), desk);
         // Pixel 0 do principal = pixel 1280 da área virtual.
         assert_eq!(x, 1280 * 65535 / 3199);
-        let (x, _) = to_virtual_desk(65535, 0, (1920, 1080), desk);
+        let (x, _) = to_virtual_desk(65535, 0, rect(0, 0, 1920, 1080), desk);
         assert_eq!(x, 65535);
+    }
+
+    #[test]
+    fn mira_o_monitor_secundario() {
+        let desk = (-1280, 0, 3200, 1080);
+        let (x, _) = to_virtual_desk(0, 0, rect(-1280, 0, 1280, 1024), desk);
+        assert_eq!(x, 0);
+        let (x, y) = to_virtual_desk(65535, 65535, rect(-1280, 0, 1280, 1024), desk);
+        assert_eq!(x, 1279 * 65535 / 3199);
+        assert_eq!(y, 1023 * 65535 / 1079);
     }
 }

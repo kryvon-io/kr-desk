@@ -16,6 +16,7 @@ export default function App() {
     state,
     remote,
     remoteCursor,
+    remoteMonitors,
     deviceName,
     tauri,
     connectTo,
@@ -46,6 +47,7 @@ export default function App() {
           peer={remote?.peer ?? null}
           stream={remote?.stream ?? null}
           cursor={remoteCursor}
+          monitors={remoteMonitors}
           tauri={tauri}
           onEnd={endSession}
         />

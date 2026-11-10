@@ -1,6 +1,6 @@
 # KR Desk — Validação de stack, arquitetura e plano de etapas
 
-> Status (10/11/2026): Etapas 0–4 concluídas · Etapa 5 (controle remoto) em PR. Repositório público `kryvon-io/kr-desk` (AGPL-3.0).
+> Status (10/11/2026): Etapas 0–5 concluídas · seleção de monitor (complemento da Etapa 5) em PR. Repositório público `kryvon-io/kr-desk` (AGPL-3.0).
 
 ---
 
@@ -128,6 +128,7 @@ Princípio: tudo que é específico de Windows fica em crates `*-win` atrás de 
 - Teclado por **scancode** (independente de layout, inclusive ABNT2), com tratamento de teclas estendidas.
 - Liberação de todas as teclas/botões pressionados ao perder foco ou encerrar a sessão (evita tecla "presa").
 - **Implementado na Etapa 5:** DataChannel `input` (sem ordem, `maxRetransmits: 0`) só para movimentos; cliques, roda e teclas no `control`, com a posição junto do clique. No host, `InputController` (`kr-core`) rastreia o que está pressionado e solta tudo ao fechar o canal; `SendInputSink` (`kr-input-win`) mapeia para o monitor principal na área de trabalho virtual. No viewer, hook `WH_KEYBOARD_LL` ativo só com a tela remota aberta e a janela em primeiro plano (scancode e flag estendida direto do Windows); fora do app, mapa `KeyboardEvent.code` → scancode. Cursor: a forma vem da DXGI (`GetFramePointerShape`) pelo canal de controle e vira o `cursor` CSS do `<video>` — sem atraso de vídeo.
+- **Seleção de monitor (complemento da Etapa 5):** a captura lista os monitores ligados à área de trabalho (principal primeiro, depois da esquerda para a direita) e envia `monitors` ao viewer; o viewer escolhe com `select_monitor`. A captura reabre a duplicação no monitor escolhido, o encoder é recriado no novo tamanho e a área desse monitor (`SharedArea`) passa a ser o alvo do mouse. "Todas as telas numa imagem só" fica para depois.
 
 ### 2.6 Segurança
 

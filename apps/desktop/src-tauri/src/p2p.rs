@@ -120,9 +120,6 @@ impl P2pManager {
                     PeerEvent::ControlOpen => {
                         status.state = PeerState::Connected;
                         if video.is_none() {
-                            if input.is_none() {
-                                input = Some(crate::remote_input::host_controller());
-                            }
                             match crate::screen::start(video_sender.clone(), control_sender.clone())
                             {
                                 Ok(stream) => {
@@ -133,9 +130,21 @@ impl P2pManager {
                                 Err(err) => warn!(%err, "tela não será transmitida"),
                             }
                         }
+                        if input.is_none() {
+                            // A entrada mira o monitor que a captura estiver transmitindo.
+                            let area = video.as_ref().map(VideoStream::area).unwrap_or_default();
+                            input = Some(crate::remote_input::host_controller(area));
+                        }
                     }
                     PeerEvent::Rtt(d) => status.rtt_ms = Some(d.as_millis() as u64),
                     PeerEvent::Route(r) => status.route = Some(r),
+                    PeerEvent::SelectMonitor(index) => {
+                        if let Some(v) = &video {
+                            info!(%request_id, index, "viewer pediu outro monitor");
+                            v.select_monitor(index);
+                        }
+                        continue;
+                    }
                     PeerEvent::Input(msg) => {
                         if let Some(c) = input.as_mut() {
                             c.handle(&msg);

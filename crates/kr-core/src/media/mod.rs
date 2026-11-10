@@ -9,6 +9,7 @@
 pub mod convert;
 pub mod pattern;
 pub mod pipeline;
+pub mod quality;
 
 use std::time::Duration;
 
@@ -183,6 +184,12 @@ pub struct EncoderConfig {
 /// [`EncoderFactory`].
 pub trait VideoEncoder {
     fn encode(&mut self, frame: &Nv12Frame, keyframe: bool) -> Result<Vec<u8>, EncodeError>;
+
+    /// Muda a taxa sem recriar o encoder. `false` = não suportado (o
+    /// pipeline então recria o encoder com a nova taxa).
+    fn set_bitrate(&mut self, _bps: u32) -> bool {
+        false
+    }
 
     /// Nome para logs (ex.: "NVIDIA H.264 Encoder MFT").
     fn name(&self) -> String;

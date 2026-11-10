@@ -15,6 +15,7 @@ import {
   type ControlMessage,
   type InputMessage,
   type MonitorInfo,
+  MAX_CLIPBOARD_CHARS,
 } from "./control";
 import {
   sdpFingerprint,
@@ -63,6 +64,10 @@ export interface ViewerPeerEvents {
   onAuth?: (outcome: VerifyOutcome) => void;
   /** O host permitiu (ou não) o controle de mouse e teclado. */
   onPermissions?: (control: boolean) => void;
+  /** Texto copiado no host. */
+  onClipboard?: (text: string) => void;
+  /** Relatório de recepção enviado ao host (pacotes perdidos/recebidos). */
+  onRxReport?: (lost: number, received: number) => void;
 }
 
 /** Autenticação da sessão (obrigatória no app). */
@@ -72,6 +77,8 @@ export interface ViewerAuth {
 }
 
 const PING_INTERVAL_MS = 1000;
+/** Intervalo dos relatórios de recepção (qualidade adaptativa). */
+const RX_REPORT_MS = 1000;
 /** Prazo para o host provar a identidade depois que o canal abre. */
 const AUTH_TIMEOUT_MS = 10_000;
 
@@ -92,6 +99,8 @@ export class ViewerPeer {
   private authenticated = false;
   private authDone = false;
   private controlAllowed = false;
+  private lastRttMs = 0;
+  private lastRx: { lost: number; received: number } | null = null;
 
   constructor(
     iceServers: IceServerDto[],
@@ -239,9 +248,41 @@ export class ViewerPeer {
       this.authenticated = true;
       this.authDone = true;
       this.events.onAuth?.(outcome);
+      this.timers.push(setInterval(() => void this.sendRxReport(), RX_REPORT_MS));
     } else {
       this.failAuth(outcome);
     }
+  }
+
+  /** Pacotes recebidos/perdidos desde o último relatório. */
+  private async sendRxReport() {
+    if (this.control.readyState !== "open") return;
+    let lost = 0;
+    let received = 0;
+    (await this.pc.getStats()).forEach(
+      (s: { type: string; kind?: string; packetsLost?: number; packetsReceived?: number }) => {
+        if (s.type === "inbound-rtp" && s.kind === "video") {
+          lost = s.packetsLost ?? 0;
+          received = s.packetsReceived ?? 0;
+        }
+      },
+    );
+    const prev = this.lastRx ?? { lost: 0, received: 0 };
+    this.lastRx = { lost, received };
+    const report = {
+      lost: Math.max(0, lost - prev.lost),
+      received: Math.max(0, received - prev.received),
+    };
+    this.control.send(JSON.stringify({ t: "rx_report", ...report, rtt_ms: this.lastRttMs }));
+    this.events.onRxReport?.(report.lost, report.received);
+  }
+
+  /** Manda texto copiado aqui para o host (só com controle permitido). */
+  sendClipboard(text: string): boolean {
+    if (!this.authenticated || !this.controlAllowed) return false;
+    if (this.control.readyState !== "open" || text.length > MAX_CLIPBOARD_CHARS) return false;
+    this.control.send(JSON.stringify({ t: "clipboard", text }));
+    return true;
   }
 
   /** O host foi verificado (vídeo e entrada liberados). */
@@ -275,7 +316,8 @@ export class ViewerPeer {
     if (!msg) return;
     if (msg.t === "ping") this.control.send(JSON.stringify({ t: "pong", n: msg.n }));
     else if (msg.t === "pong" && this.inFlight?.n === msg.n) {
-      this.events.onRtt?.(Math.round(performance.now() - this.inFlight.at));
+      this.lastRttMs = Math.round(performance.now() - this.inFlight.at);
+      this.events.onRtt?.(this.lastRttMs);
       this.inFlight = null;
     } else if (msg.t === "cursor_shape" || msg.t === "cursor_visible") {
       this.events.onCursor?.(msg);
@@ -284,6 +326,8 @@ export class ViewerPeer {
     } else if (msg.t === "auth") {
       // O SDP já está aplicado quando o canal abre: dá para verificar já.
       void this.verifyHost(msg.pk, msg.sig);
+    } else if (msg.t === "clipboard") {
+      if (this.authenticated && this.controlAllowed) this.events.onClipboard?.(msg.text);
     } else if (msg.t === "permissions") {
       this.controlAllowed = msg.control;
       this.events.onPermissions?.(msg.control);

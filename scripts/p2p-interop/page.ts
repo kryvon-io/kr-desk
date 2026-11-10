@@ -23,6 +23,8 @@ interface InteropResult {
   monitors?: number;
   switchedTo?: string;
   auth?: string;
+  clipboard?: string;
+  rxReports?: number;
   code?: string;
   error?: string;
 }
@@ -102,6 +104,8 @@ ws.onopen = async () => {
       },
       onMonitors: (list) => (result.monitors = list.length),
       onVerificationCode: (code) => (result.code = code),
+      onClipboard: (text) => (result.clipboard = text),
+      onRxReport: () => (result.rxReports = (result.rxReports ?? 0) + 1),
       onAuth: (outcome) => {
         if (outcome.result === "ok") {
           result.auth = "ok";
@@ -137,6 +141,8 @@ ws.onopen = async () => {
         result.route !== undefined &&
         s.framesDecoded >= MIN_FRAMES &&
         result.cursor !== undefined &&
+        result.clipboard === "olá do host ✓" &&
+        (result.rxReports ?? 0) >= 2 &&
         result.monitors === 2;
       if (ready && switchRequested === null) {
         // Troca para o segundo monitor (320×240) e espera a nova resolução.
@@ -160,6 +166,7 @@ function sendInputAndFinish(peer: ViewerPeer) {
   peer.sendInput({ t: "wheel", dx: 0, dy: -120 });
   peer.sendInput({ t: "key", code: 0x1e, ext: false, down: true });
   peer.sendInput({ t: "key", code: 0x1e, ext: false, down: false });
+  peer.sendClipboard("olá do viewer ç");
   // Dá tempo de o canal não confiável entregar antes de encerrar.
   setTimeout(() => ws.send("done"), 500);
 }

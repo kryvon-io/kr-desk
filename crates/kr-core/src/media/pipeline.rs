@@ -5,7 +5,7 @@
 //! termina.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
@@ -56,6 +56,24 @@ pub struct PipelineControl {
     stop: AtomicBool,
     /// Monitor pedido (`NO_MONITOR` = nenhum pedido pendente).
     monitor: AtomicU32,
+    /// Qualidade pedida, empacotada por `pack_quality` (0 = nenhum pedido).
+    quality: AtomicU64,
+}
+
+/// Empacota (bitrate, largura, altura) num u64; 0 = nenhum pedido.
+/// Largura e altura máximas cabem em 16 bits cada (até 65535).
+fn pack_quality(t: super::quality::QualityTarget) -> u64 {
+    ((t.bitrate_bps as u64) << 32)
+        | ((t.max_width.min(0xFFFF) as u64) << 16)
+        | t.max_height.min(0xFFFF) as u64
+}
+
+fn unpack_quality(v: u64) -> super::quality::QualityTarget {
+    super::quality::QualityTarget {
+        bitrate_bps: (v >> 32) as u32,
+        max_width: ((v >> 16) & 0xFFFF) as u32,
+        max_height: (v & 0xFFFF) as u32,
+    }
 }
 
 const NO_MONITOR: u32 = u32::MAX;
@@ -66,6 +84,7 @@ impl Default for PipelineControl {
             keyframe: AtomicBool::new(false),
             stop: AtomicBool::new(false),
             monitor: AtomicU32::new(NO_MONITOR),
+            quality: AtomicU64::new(0),
         }
     }
 }
@@ -82,6 +101,18 @@ impl PipelineControl {
 
     pub fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
+    }
+
+    /// Pede outra taxa/resolução máxima (controle adaptativo).
+    pub fn request_quality(&self, target: super::quality::QualityTarget) {
+        self.quality.store(pack_quality(target), Ordering::Relaxed);
+    }
+
+    fn take_quality(&self) -> Option<super::quality::QualityTarget> {
+        match self.quality.swap(0, Ordering::Relaxed) {
+            0 => None,
+            v => Some(unpack_quality(v)),
+        }
     }
 
     /// Pede a troca para outro monitor no próximo quadro.
@@ -164,6 +195,9 @@ pub fn run_pipeline(
     let mut last_key: Option<Instant> = None;
     let mut next_capture = Instant::now();
     let mut transient_logged = false;
+    // Ajustados pelo controle adaptativo durante a sessão.
+    let (mut bitrate, mut max_w, mut max_h) =
+        (config.bitrate_bps, config.max_width, config.max_height);
     info!(source = %source.name(), ?config, "pipeline de vídeo iniciado");
 
     while !control.is_stopped() {
@@ -173,6 +207,19 @@ pub fn run_pipeline(
             std::thread::sleep(next_capture - now);
         }
         let iteration = Instant::now();
+        if let Some(t) = control.take_quality() {
+            if t.bitrate_bps != bitrate {
+                bitrate = t.bitrate_bps;
+                // Sem ajuste dinâmico, o encoder é recriado no próximo quadro.
+                if let Some(s) = state.as_mut()
+                    && !s.encoder.set_bitrate(bitrate)
+                {
+                    state = None;
+                }
+            }
+            (max_w, max_h) = (t.max_width, t.max_height);
+            info!(bitrate, max_w, max_h, "qualidade ajustada");
+        }
         if let Some(index) = control.take_monitor() {
             match source.select_monitor(index) {
                 Ok(()) => {
@@ -208,8 +255,7 @@ pub fn run_pipeline(
 
         match captured {
             Some(bgra) => {
-                let (w, h) =
-                    fit_within(bgra.width, bgra.height, config.max_width, config.max_height);
+                let (w, h) = fit_within(bgra.width, bgra.height, max_w, max_h);
                 if state
                     .as_ref()
                     .is_none_or(|s| s.frame.width != w || s.frame.height != h)
@@ -218,7 +264,7 @@ pub fn run_pipeline(
                         width: w,
                         height: h,
                         fps: config.fps,
-                        bitrate_bps: config.bitrate_bps,
+                        bitrate_bps: bitrate,
                     })?;
                     info!(
                         encoder = %encoder.name(),
@@ -491,6 +537,56 @@ mod tests {
         .unwrap();
         assert_eq!(*created.lock().unwrap(), vec![(32, 16), (16, 8)]);
         assert_eq!(actives, vec![0, 1]);
+    }
+
+    #[test]
+    fn qualidade_recria_encoder_com_taxa_e_tamanho_novos() {
+        let created = Arc::new(Mutex::new(Vec::new()));
+        let log = created.clone();
+        let factory: EncoderFactory = Box::new(move |cfg| {
+            log.lock()
+                .unwrap()
+                .push((cfg.width, cfg.height, cfg.bitrate_bps));
+            Ok(Box::new(Fake {
+                log: Arc::default(),
+            }))
+        });
+        let source = Box::new(crate::media::pattern::TestPattern::new(64, 32, 1000));
+        let control = PipelineControl::new();
+        let c = control.clone();
+        let mut frames = 0;
+        run_pipeline(
+            source,
+            factory,
+            fast(),
+            control,
+            |_| {
+                frames += 1;
+                if frames == 2 {
+                    c.request_quality(crate::media::quality::QualityTarget {
+                        bitrate_bps: 700_000,
+                        max_width: 32,
+                        max_height: 32,
+                    });
+                }
+                frames < 4
+            },
+            |_| {},
+        )
+        .unwrap();
+        let created = created.lock().unwrap().clone();
+        assert_eq!(created[0], (64, 32, PipelineConfig::default().bitrate_bps));
+        assert_eq!(created[1], (32, 16, 700_000));
+    }
+
+    #[test]
+    fn empacota_qualidade() {
+        let t = crate::media::quality::QualityTarget {
+            bitrate_bps: 8_000_000,
+            max_width: 1920,
+            max_height: 1080,
+        };
+        assert_eq!(unpack_quality(pack_quality(t)), t);
     }
 
     #[test]

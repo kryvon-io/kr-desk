@@ -15,7 +15,11 @@ export type ControlMessage =
   | { t: "cursor_visible"; visible: boolean }
   | { t: "monitors"; list: MonitorInfo[]; active: number }
   | { t: "auth"; pk: string; sig: string }
-  | { t: "permissions"; control: boolean };
+  | { t: "permissions"; control: boolean }
+  | { t: "clipboard"; text: string };
+
+/** Limite de texto da área de transferência (igual ao Rust). */
+export const MAX_CLIPBOARD_CHARS = 50_000;
 
 /** Monitor do host disponível para transmissão. */
 export interface MonitorInfo {
@@ -89,6 +93,9 @@ export function parseControl(raw: string): ControlMessage | null {
   }
   if (o.t === "auth" && typeof o.pk === "string" && typeof o.sig === "string") {
     return { t: "auth", pk: o.pk, sig: o.sig };
+  }
+  if (o.t === "clipboard" && typeof o.text === "string" && o.text.length <= MAX_CLIPBOARD_CHARS) {
+    return { t: "clipboard", text: o.text };
   }
   if (o.t === "permissions" && typeof o.control === "boolean") {
     return { t: "permissions", control: o.control };

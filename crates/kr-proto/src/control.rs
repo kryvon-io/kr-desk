@@ -134,7 +134,23 @@ pub enum ControlMessage {
     Permissions {
         control: bool,
     },
+    /// Viewer → host: recepção do vídeo no último intervalo (~1 s), para o
+    /// controle adaptativo de qualidade.
+    RxReport {
+        lost: u32,
+        received: u32,
+        rtt_ms: u32,
+    },
+    /// Ambos: texto copiado na área de transferência (só com controle
+    /// permitido; até [`MAX_CLIPBOARD_CHARS`] caracteres).
+    Clipboard {
+        text: String,
+    },
 }
+
+/// Limite de texto da área de transferência por mensagem (o SCTP do
+/// DataChannel aceita até ~256 KB; texto em UTF-8 pode ter 4 bytes/caractere).
+pub const MAX_CLIPBOARD_CHARS: usize = 50_000;
 
 impl ControlMessage {
     pub fn to_json(&self) -> String {

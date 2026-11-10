@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use kr_core::media::quality::QualityController;
 use kr_identity::{DeviceIdentity, KnownPeers, Trust, verification_code, verify_peer};
 use kr_proto::control::ControlMessage;
 use kr_proto::session::Role;
@@ -25,6 +26,10 @@ pub const EVENT_P2P: &str = "p2p-status";
 
 /// Intervalo para verificar se a transmissão da tela continua viva.
 const VIDEO_CHECK: Duration = Duration::from_secs(2);
+/// Faixa de taxa do controle adaptativo (bps).
+const MIN_BITRATE: u32 = 400_000;
+const MAX_BITRATE: u32 = 8_000_000;
+
 /// Prazo para o viewer provar sua identidade depois que o canal abre.
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -167,6 +172,20 @@ impl P2pManager {
             let mut input: Option<kr_core::input::InputController<crate::remote_input::HostSink>> =
                 None;
             let mut auth_deadline: Option<tokio::time::Instant> = None;
+            let mut quality = QualityController::new(
+                kr_core::media::PipelineConfig::default().bitrate_bps,
+                MIN_BITRATE,
+                MAX_BITRATE,
+            );
+            // Texto copiado aqui → viewer (só com controle permitido).
+            let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<String>();
+            let mut clipboard: Option<crate::remote_input::ClipboardSync> = None;
+            let start_clipboard = |tx: &mpsc::UnboundedSender<String>| {
+                let tx = tx.clone();
+                crate::remote_input::ClipboardSync::start(move |text| {
+                    let _ = tx.send(text);
+                })
+            };
             let mut check = tokio::time::interval(VIDEO_CHECK);
 
             // Encerra a sessão por falha de segurança.
@@ -185,6 +204,14 @@ impl P2pManager {
                         Some(ev) => ev,
                         None => break,
                     },
+                    Some(text) = clip_rx.recv() => {
+                        if status.control && status.authenticated
+                            && text.chars().count() <= kr_proto::control::MAX_CLIPBOARD_CHARS
+                        {
+                            control_sender.send(&ControlMessage::Clipboard { text }).await;
+                        }
+                        continue;
+                    }
                     changed = control_rx.changed() => {
                         if changed.is_err() {
                             continue;
@@ -196,6 +223,9 @@ impl P2pManager {
                             if let Some(c) = input.as_mut() {
                                 c.release_all();
                             }
+                            clipboard = None;
+                        } else if status.authenticated && clipboard.is_none() {
+                            clipboard = Some(start_clipboard(&clip_tx));
                         }
                         control_sender.send(&ControlMessage::Permissions { control: allow }).await;
                         info!(%request_id, control = allow, "permissão de controle alterada");
@@ -306,6 +336,9 @@ impl P2pManager {
                                         Err(err) => warn!(%err, "tela não será transmitida"),
                                     }
                                 }
+                                if status.control && clipboard.is_none() {
+                                    clipboard = Some(start_clipboard(&clip_tx));
+                                }
                                 if input.is_none() {
                                     // A entrada mira o monitor que a captura estiver transmitindo.
                                     let area =
@@ -322,6 +355,21 @@ impl P2pManager {
                     }
                     PeerEvent::Rtt(d) => status.rtt_ms = Some(d.as_millis() as u64),
                     PeerEvent::Route(r) => status.route = Some(r),
+                    PeerEvent::RxReport(report) => {
+                        if let (Some(target), Some(v)) = (quality.on_report(report), &video) {
+                            info!(%request_id, ?target, ?report, "qualidade ajustada à rede");
+                            v.set_quality(target);
+                        }
+                        continue;
+                    }
+                    PeerEvent::Clipboard(text) => {
+                        if status.control
+                            && let Some(c) = &clipboard
+                        {
+                            c.set_remote(&text);
+                        }
+                        continue;
+                    }
                     PeerEvent::SelectMonitor(index) => {
                         if let Some(v) = &video {
                             info!(%request_id, index, "viewer pediu outro monitor");
@@ -348,6 +396,7 @@ impl P2pManager {
                 if matches!(status.state, PeerState::Closed | PeerState::Failed) {
                     video = None;
                     input = None;
+                    clipboard = None;
                     status.sharing = false;
                 }
                 emit(&app, status.clone());

@@ -229,3 +229,22 @@ pub fn forget_peer(peer_id: String, session: State<'_, Session>) {
 pub fn set_session_control(request_id: String, allow: bool, bridge: State<'_, Bridge>) -> bool {
     bridge.p2p.set_control(&request_id, allow)
 }
+
+/// Viewer: liga/desliga o envio do texto copiado aqui (evento
+/// `local-clipboard`).
+#[tauri::command]
+pub fn set_viewer_clipboard(
+    enabled: bool,
+    app: tauri::AppHandle,
+    clipboard: State<'_, crate::remote_input::ViewerClipboard>,
+) {
+    clipboard.set_enabled(&app, enabled);
+}
+
+/// Viewer: escreve aqui o texto copiado no outro computador.
+#[tauri::command]
+pub fn write_clipboard(text: String, clipboard: State<'_, crate::remote_input::ViewerClipboard>) {
+    if text.chars().count() <= kr_proto::control::MAX_CLIPBOARD_CHARS {
+        clipboard.set_remote(&text);
+    }
+}

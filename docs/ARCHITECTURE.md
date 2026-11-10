@@ -1,6 +1,6 @@
 # KR Desk — Validação de stack, arquitetura e plano de etapas
 
-> Status (10/11/2026): Etapa 0 concluída · Etapa 1 pronta no PR #1 (CI verde, teste ponta a ponta na Vercel ok). Repositório público `kryvon-io/kr-desk` (AGPL-3.0).
+> Status (10/11/2026): Etapas 0–2 concluídas · Etapa 3 (P2P) em PR. Repositório público `kryvon-io/kr-desk` (AGPL-3.0).
 
 ---
 

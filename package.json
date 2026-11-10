@@ -15,14 +15,17 @@
     "test": "pnpm -r --if-present test",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:p2p": "node scripts/p2p-interop/run.mjs"
   },
   "devDependencies": {
     "@eslint/js": "catalog:",
+    "esbuild": "catalog:",
     "eslint": "catalog:",
     "eslint-plugin-react-hooks": "catalog:",
     "eslint-plugin-react-refresh": "catalog:",
     "globals": "catalog:",
+    "playwright-core": "catalog:",
     "prettier": "catalog:",
     "typescript": "catalog:",
     "typescript-eslint": "catalog:"

@@ -212,6 +212,9 @@ catalogs:
     clsx:
       specifier: 2.1.1
       version: 2.1.1
+    esbuild:
+      specifier: 0.28.2
+      version: 0.28.2
     eslint:
       specifier: 10.14.0
       version: 10.14.0
@@ -233,6 +236,9 @@ catalogs:
     lucide-react:
       specifier: 1.70.0
       version: 1.70.0
+    playwright-core:
+      specifier: 1.65.0
+      version: 1.65.0
     prettier:
       specifier: 3.9.10
       version: 3.9.10
@@ -286,6 +292,9 @@ importers:
       '@eslint/js':
         specifier: 'catalog:'
         version: 10.0.1(eslint@10.14.0(jiti@2.7.0))
+      esbuild:
+        specifier: 'catalog:'
+        version: 0.28.2
       eslint:
         specifier: 'catalog:'
         version: 10.14.0(jiti@2.7.0)
@@ -298,6 +307,9 @@ importers:
       globals:
         specifier: 'catalog:'
         version: 17.14.0
+      playwright-core:
+        specifier: 'catalog:'
+        version: 1.65.0
       prettier:
         specifier: 'catalog:'
         version: 3.9.10
@@ -2522,6 +2534,11 @@ packages:
 
   pkg-types@2.4.0:
     resolution: {integrity: sha512-07Fys7iVx0X6TcviMOgogM1Lk33ZyqOezMnU79S+kffWqwolG/5W9V8EgQSeYCIfFTYVgssRbnH630Oa2+soBA==}
+
+  playwright-core@1.65.0:
+    resolution: {integrity: sha512-vNSKgH6YqtN7cdT/L334zo0a+YwkrpicyrHJlWWPIm/Q+Nn2SWInil01oT0mbu96U4GgoRtCYQD9CzJQgju+lA==}
+    engines: {node: '>=20'}
+    hasBin: true
 
   pluralize@8.0.0:
     resolution: {integrity: sha512-Nc3IT5yHzflTfbjgqWcCPpo7DaKy4FnpB0l/zCAW0Tc7jxAiuqSxHasntB3D7887LSrA93kDJ9IXovxJYxyLCA==}
@@ -5047,6 +5064,8 @@ snapshots:
       confbox: 0.3.2
       exsolve: 1.2.0
       pathe: 2.0.3
+
+  playwright-core@1.65.0: {}
 
   pluralize@8.0.0: {}
 

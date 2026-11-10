@@ -36,7 +36,8 @@ describe("lado de quem acessa (viewer)", () => {
       }),
     );
     expect(s.outgoing).toEqual({ kind: "accepted", requestId: RID, peerId: "444555666" });
-    expect(s.active).toEqual({ requestId: RID, peerId: "444555666", role: "viewer" });
+    expect(s.active).toMatchObject({ requestId: RID, peerId: "444555666", role: "viewer" });
+    expect(s.active?.p2p.state).toBe("connecting");
   });
 
   it("recusa e timeout mostram mensagens diferentes", () => {
@@ -109,7 +110,7 @@ describe("lado de quem é acessado (host)", () => {
       msg({ type: "session_ready", request_id: RID, peer_id: "777888999", peer_public_key: "k" }),
     );
     expect(s.incoming).toEqual([]);
-    expect(s.active).toEqual({ requestId: RID, peerId: "777888999", role: "host" });
+    expect(s.active).toMatchObject({ requestId: RID, peerId: "777888999", role: "host" });
   });
 
   it("pedido expirado some e gera aviso", () => {
@@ -126,6 +127,28 @@ describe("lado de quem é acessado (host)", () => {
     );
     expect(s.active).toBeNull();
     expect(s.notice).toContain("encerrou");
+  });
+});
+
+describe("estado P2P", () => {
+  const ready = msg({
+    type: "session_ready",
+    request_id: RID,
+    peer_id: "777888999",
+    peer_public_key: "k",
+  });
+  const route = { local: "srflx", remote: "host", protocol: "udp", relayed: false } as const;
+
+  it("atualiza estado, latência e rota só da sessão ativa", () => {
+    const s = run(
+      online,
+      ready,
+      { type: "p2p_status", requestId: RID, state: "connected" },
+      { type: "p2p_status", requestId: RID, rttMs: 12 },
+      { type: "p2p_status", requestId: RID, route },
+      { type: "p2p_status", requestId: "outra", state: "failed" },
+    );
+    expect(s.active?.p2p).toEqual({ state: "connected", rttMs: 12, route });
   });
 });
 

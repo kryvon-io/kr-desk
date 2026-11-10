@@ -2,6 +2,7 @@
 
 mod commands;
 mod logging;
+mod p2p;
 mod signaling;
 mod tray;
 
@@ -56,6 +57,7 @@ pub fn run() {
             commands::connect_to,
             commands::respond_request,
             commands::end_session,
+            commands::send_signal,
         ])
         .run(tauri::generate_context!())
         .expect("falha ao iniciar o KR Desk");

@@ -1,3 +1,5 @@
+import type { IceServerDto, PeerState, RouteInfo } from "./viewer-peer";
+
 /**
  * Estado da sinalização na interface, como um reducer puro (testável sem DOM).
  * Os tipos espelham `kr_proto::ServerMessage` e o `StatusDto` do Rust.
@@ -36,11 +38,19 @@ export type ServerMessage =
       request_id: string;
       peer_id: string;
       peer_public_key: string;
+      ice_servers?: IceServerDto[];
     }
   | { type: "connect_rejected"; request_id: string; reason: RejectReason }
   | { type: "session_ended"; request_id: string }
   | { type: "error"; code: ErrorCode; message: string; request_id?: string }
-  | { type: "signal"; request_id: string };
+  | { type: "signal"; request_id: string; from_id?: string; payload?: unknown };
+
+/** Estado da conexão ponto a ponto da sessão ativa. */
+export interface P2pStatus {
+  state: PeerState;
+  rttMs: number | null;
+  route: RouteInfo | null;
+}
 
 export interface IncomingRequest {
   requestId: string;
@@ -61,7 +71,10 @@ export interface ActiveSession {
   peerId: string;
   /** Este computador está sendo acessado (host) ou acessando (viewer). */
   role: "host" | "viewer";
+  p2p: P2pStatus;
 }
+
+const P2P_INITIAL: P2pStatus = { state: "connecting", rttMs: null, route: null };
 
 export interface SignalingState {
   status: ConnectionStatus;
@@ -93,7 +106,14 @@ export type Action =
   | { type: "incoming_answered"; requestId: string; accepted: boolean }
   | { type: "outgoing_reset" }
   | { type: "session_closed"; requestId: string }
-  | { type: "notice_dismissed" };
+  | { type: "notice_dismissed" }
+  | {
+      type: "p2p_status";
+      requestId: string;
+      state?: PeerState;
+      rttMs?: number | null;
+      route?: RouteInfo | null;
+    };
 
 const ERROR_TEXT: Partial<Record<ErrorCode, string>> = {
   target_offline: "Computador offline ou ID inexistente.",
@@ -151,6 +171,14 @@ export function reducer(state: SignalingState, action: Action): SignalingState {
       };
     case "notice_dismissed":
       return { ...state, notice: null };
+    case "p2p_status": {
+      if (state.active?.requestId !== action.requestId) return state;
+      const p2p = { ...state.active.p2p };
+      if (action.state !== undefined) p2p.state = action.state;
+      if (action.rttMs !== undefined) p2p.rttMs = action.rttMs;
+      if (action.route !== undefined) p2p.route = action.route;
+      return { ...state, active: { ...state.active, p2p } };
+    }
     case "message":
       return onMessage(state, action.msg, action.now);
   }
@@ -183,13 +211,18 @@ function onMessage(state: SignalingState, msg: ServerMessage, now: number): Sign
       return {
         ...state,
         outgoing: { kind: "accepted", requestId: msg.request_id, peerId: msg.peer_id },
-        active: { requestId: msg.request_id, peerId: msg.peer_id, role: "viewer" },
+        active: {
+          requestId: msg.request_id,
+          peerId: msg.peer_id,
+          role: "viewer",
+          p2p: P2P_INITIAL,
+        },
       };
 
     case "session_ready":
       return {
         ...state,
-        active: { requestId: msg.request_id, peerId: msg.peer_id, role: "host" },
+        active: { requestId: msg.request_id, peerId: msg.peer_id, role: "host", p2p: P2P_INITIAL },
       };
 
     case "connect_rejected":

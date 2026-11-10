@@ -1,0 +1,6 @@
+[
+  { "t": "ping", "n": 1 },
+  { "t": "pong", "n": 1 },
+  { "t": "route", "local": "srflx", "remote": "host", "protocol": "udp" },
+  { "t": "route", "local": "relay", "remote": "prflx", "protocol": "tcp" }
+]

@@ -78,15 +78,38 @@ pub fn respond_request(
         .map_err(|e| e.to_string())
 }
 
-/// Encerra ou cancela uma sessão/pedido.
+/// Encerra ou cancela uma sessão/pedido (e a conexão P2P, se houver).
 #[tauri::command]
-pub fn end_session(request_id: String, bridge: State<'_, Bridge>) -> Result<(), String> {
+pub async fn end_session(request_id: String, bridge: State<'_, Bridge>) -> Result<(), String> {
     if !is_request_id(&request_id) {
         return Err("Sessão inválida.".into());
     }
+    bridge.p2p.close(&request_id).await;
     bridge
         .handle
         .send(ClientMessage::EndSession { request_id })
+        .map_err(|e| e.to_string())
+}
+
+/// Envia um sinal WebRTC (oferta/candidato) do viewer ao host.
+#[tauri::command]
+pub fn send_signal(
+    request_id: String,
+    payload: serde_json::Value,
+    bridge: State<'_, Bridge>,
+) -> Result<(), String> {
+    if !is_request_id(&request_id) {
+        return Err("Sessão inválida.".into());
+    }
+    if !payload.is_object() {
+        return Err("Sinal inválido.".into());
+    }
+    bridge
+        .handle
+        .send(ClientMessage::Signal {
+            request_id,
+            payload,
+        })
         .map_err(|e| e.to_string())
 }
 

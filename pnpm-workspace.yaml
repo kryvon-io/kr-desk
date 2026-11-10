@@ -15,6 +15,8 @@ catalog:
   prettier: 3.9.10
   vitest: 5.1.0
   tsx: 4.23.15
+  esbuild: 0.28.2
+  playwright-core: 1.65.0
   "@types/node": 26.6.6
 
   # Desktop

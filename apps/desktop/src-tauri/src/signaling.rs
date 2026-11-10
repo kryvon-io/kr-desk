@@ -8,6 +8,8 @@ use kr_signaling::{ConnectionStatus, SignalingConfig, SignalingEvent, SignalingH
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, UserAttentionType};
 
+use crate::p2p::P2pManager;
+
 /// Evento com o estado da conexão (payload: [`StatusDto`]).
 pub const EVENT_STATUS: &str = "signaling-status";
 /// Evento com mensagens do servidor (payload: `ServerMessage` em JSON do protocolo).
@@ -16,6 +18,7 @@ pub const EVENT_MESSAGE: &str = "signaling-message";
 /// Estado compartilhado com os comandos.
 pub struct Bridge {
     pub handle: SignalingHandle,
+    pub p2p: Arc<P2pManager>,
     pub status: Mutex<StatusDto>,
     pub device_name: String,
 }
@@ -75,7 +78,8 @@ pub fn start(app: AppHandle, identity: Arc<DeviceIdentity>) -> Bridge {
     let _guard = rt.inner().enter();
     let (handle, mut events) = kr_signaling::spawn(config, identity);
 
-    let app_for_task = app.clone();
+    let p2p = Arc::new(P2pManager::default());
+    let (app_for_task, handle_for_task, p2p_for_task) = (app.clone(), handle.clone(), p2p.clone());
     tauri::async_runtime::spawn(async move {
         while let Some(event) = events.recv().await {
             match event {
@@ -87,12 +91,48 @@ pub fn start(app: AppHandle, identity: Arc<DeviceIdentity>) -> Bridge {
                     let _ = app_for_task.emit(EVENT_STATUS, dto);
                 }
                 SignalingEvent::Message(msg) => {
-                    if matches!(msg, ServerMessage::IncomingRequest { .. }) {
-                        // Pedido de acesso: traz a janela à frente e chama atenção.
-                        crate::show_main_window(&app_for_task);
-                        if let Some(w) = app_for_task.get_webview_window(crate::MAIN_WINDOW) {
-                            let _ = w.request_user_attention(Some(UserAttentionType::Critical));
+                    match &msg {
+                        ServerMessage::IncomingRequest { .. } => {
+                            // Pedido de acesso: traz a janela à frente e chama atenção.
+                            crate::show_main_window(&app_for_task);
+                            if let Some(w) = app_for_task.get_webview_window(crate::MAIN_WINDOW) {
+                                let _ = w.request_user_attention(Some(UserAttentionType::Critical));
+                            }
                         }
+                        ServerMessage::SessionReady {
+                            request_id,
+                            ice_servers,
+                            ..
+                        } => {
+                            // Aceitamos o pedido: este computador é o host da conexão P2P.
+                            let (app, handle, p2p) = (
+                                app_for_task.clone(),
+                                handle_for_task.clone(),
+                                p2p_for_task.clone(),
+                            );
+                            let (rid, ice) = (request_id.clone(), ice_servers.clone());
+                            tauri::async_runtime::spawn(async move {
+                                p2p.start_host(app, handle, rid, ice).await;
+                            });
+                        }
+                        ServerMessage::Signal {
+                            request_id,
+                            payload,
+                            ..
+                        } => {
+                            // Sinais de sessões em que somos host ficam no Rust;
+                            // os demais (somos viewer) seguem para a interface.
+                            if p2p_for_task
+                                .handle_signal(request_id, payload.clone())
+                                .await
+                            {
+                                continue;
+                            }
+                        }
+                        ServerMessage::SessionEnded { request_id } => {
+                            p2p_for_task.close(request_id).await;
+                        }
+                        _ => {}
                     }
                     let _ = app_for_task.emit(EVENT_MESSAGE, msg);
                 }
@@ -102,6 +142,7 @@ pub fn start(app: AppHandle, identity: Arc<DeviceIdentity>) -> Bridge {
 
     Bridge {
         handle,
+        p2p,
         status: Mutex::new(StatusDto::Connecting),
         device_name,
     }

@@ -54,6 +54,7 @@ export default function App() {
         <ConnectCard
           outgoing={state.outgoing}
           online={state.status.state === "online"}
+          inSession={state.active !== null}
           onConnect={connectTo}
           onCancel={endSession}
           onReset={resetOutgoing}

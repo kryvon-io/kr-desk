@@ -27,11 +27,15 @@ export default tseslint.config(
     },
   },
   {
+    files: ["scripts/**/page.ts"],
+    languageOptions: { globals: globals.browser },
+  },
+  {
     files: ["apps/desktop/src/components/ui/**/*.{ts,tsx}"],
     rules: { "react-refresh/only-export-components": "off" },
   },
   {
-    files: ["apps/server/**/*.{ts,mjs}", "*.js", "apps/*/*.config.ts"],
+    files: ["apps/server/**/*.{ts,mjs}", "*.js", "apps/*/*.config.ts", "scripts/**/*.mjs"],
     languageOptions: { globals: globals.node },
   },
 );

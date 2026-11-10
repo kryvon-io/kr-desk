@@ -18,6 +18,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod auth;
+pub mod control;
 
 /// Versão do protocolo de sinalização. Incrementar a cada mudança incompatível.
 pub const PROTOCOL_VERSION: u16 = 1;

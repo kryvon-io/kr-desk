@@ -8,20 +8,22 @@ import { formatId, sanitizeIdInput, type Outgoing } from "@/lib/signaling-state"
 interface Props {
   outgoing: Outgoing;
   online: boolean;
+  /** Já existe uma sessão ativa: só uma por vez nesta etapa. */
+  inSession: boolean;
   onConnect: (targetId: string) => void;
   onCancel: (requestId: string) => void;
   onReset: () => void;
 }
 
 /** Formulário para pedir acesso a outro computador e acompanhar o pedido. */
-export function ConnectCard({ outgoing, online, onConnect, onCancel, onReset }: Props) {
+export function ConnectCard({ outgoing, online, inSession, onConnect, onCancel, onReset }: Props) {
   const [value, setValue] = useState("");
   const digits = sanitizeIdInput(value);
   const busy = outgoing.kind === "sending" || outgoing.kind === "pending";
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (digits.length === 9 && online && !busy) onConnect(digits);
+    if (digits.length === 9 && online && !busy && !inSession) onConnect(digits);
   }
 
   return (
@@ -41,7 +43,11 @@ export function ConnectCard({ outgoing, online, onConnect, onCancel, onReset }: 
           }}
           disabled={busy}
         />
-        <Button type="submit" disabled={digits.length !== 9 || !online || busy}>
+        <Button
+          type="submit"
+          disabled={digits.length !== 9 || !online || busy || inSession}
+          title={inSession ? "Encerre a sessão atual para iniciar outra" : undefined}
+        >
           {busy ? <Loader2 className="animate-spin" /> : <PlugZap />}
           Conectar
         </Button>
@@ -62,8 +68,8 @@ export function ConnectCard({ outgoing, online, onConnect, onCancel, onReset }: 
         {outgoing.kind === "accepted" && (
           <p className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
             <CircleCheck className="size-4" />
-            Acesso autorizado por {formatId(outgoing.peerId)}. A transmissão de tela chega na
-            próxima etapa.
+            Acesso autorizado por {formatId(outgoing.peerId)}. A transmissão de tela chega na Etapa
+            4.
           </p>
         )}
         {outgoing.kind === "failed" && (

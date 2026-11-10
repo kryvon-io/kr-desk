@@ -1,5 +1,5 @@
 import websocket from "@fastify/websocket";
-import Fastify, { type FastifyServerOptions } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 
 import type { Bus } from "./bus.js";
 import { SignalingHub, type HubConfig } from "./hub.js";
@@ -20,13 +20,14 @@ export interface AppDeps {
   hubConfig?: Partial<HubConfig>;
 }
 
-/**
- * Monta a aplicação sem iniciar a escuta, para ser usada tanto pelo
- * entrypoint (`src/index.ts`, detectado pela Vercel) quanto pelos testes.
- */
-export async function buildApp(deps: AppDeps, options: FastifyServerOptions = {}) {
-  // trustProxy: atrás da Vercel o IP real vem em X-Forwarded-For (usado no rate limit).
-  const app = Fastify({ trustProxy: true, ...options });
+/** Opções padrão do Fastify para o servidor de sinalização. */
+export const SERVER_OPTIONS = {
+  // Atrás da Vercel o IP real vem em X-Forwarded-For (usado no rate limit).
+  trustProxy: true,
+} satisfies FastifyServerOptions;
+
+/** Registra rotas, WebSocket e hub numa instância Fastify já criada. */
+export async function configureApp(app: FastifyInstance, deps: AppDeps) {
   const hub = new SignalingHub({
     bus: deps.bus,
     store: deps.store,
@@ -55,6 +56,11 @@ export async function buildApp(deps: AppDeps, options: FastifyServerOptions = {}
 
   app.decorate("hub", hub);
   return app;
+}
+
+/** Cria e configura a aplicação sem iniciar a escuta (usado nos testes). */
+export async function buildApp(deps: AppDeps, options: FastifyServerOptions = {}) {
+  return configureApp(Fastify({ ...SERVER_OPTIONS, ...options }), deps);
 }
 
 declare module "fastify" {

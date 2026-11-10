@@ -4,9 +4,12 @@
 import { spawnSync } from "node:child_process";
 
 const env = process.env.VERCEL_ENV ?? "local";
+const branch = process.env.VERCEL_GIT_COMMIT_REF ?? "";
 
-if (env !== "production") {
-  console.log(`[vercel-build] ambiente "${env}": migrações ignoradas.`);
+// Exige produção E a branch main: o primeiro deploy de um projeto pode ser
+// marcado como produção mesmo vindo de outra branch.
+if (env !== "production" || branch !== "main") {
+  console.log(`[vercel-build] ambiente "${env}", branch "${branch}": migrações ignoradas.`);
   process.exit(0);
 }
 

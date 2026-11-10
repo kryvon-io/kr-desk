@@ -1,19 +1,19 @@
 // Entrypoint detectado automaticamente pela Vercel (src/index.ts).
-import { buildApp } from "./build-app.js";
+// A Vercel exige que este arquivo importe o `fastify` diretamente.
+import Fastify from "fastify";
+
+import { configureApp, SERVER_OPTIONS } from "./build-app.js";
 import { depsFromEnv } from "./config.js";
 
-const bootLog = {
-  warn: (obj: object, msg: string) => console.warn(msg, obj),
-};
-
-const app = await buildApp(await depsFromEnv(process.env, bootLog), {
+const fastify = Fastify({
+  ...SERVER_OPTIONS,
   logger: { level: process.env["LOG_LEVEL"] ?? "info" },
 });
-const port = Number(process.env["PORT"] ?? 3000);
+await configureApp(fastify, await depsFromEnv(process.env, fastify.log));
 
 try {
-  await app.listen({ port, host: "0.0.0.0" });
+  await fastify.listen({ port: Number(process.env["PORT"] ?? 3000), host: "0.0.0.0" });
 } catch (err) {
-  app.log.error(err);
+  fastify.log.error(err);
   process.exit(1);
 }

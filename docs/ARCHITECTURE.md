@@ -98,6 +98,7 @@ kr-desk/
 │  ├─ kr-transport/       # adaptador webrtc-rs 0.21 (isola a biblioteca do resto)
 │  ├─ kr-capture-win/     # DXGI Desktop Duplication (+ fallback WGC)
 │  ├─ kr-codec-win/       # Media Foundation H.264 (HW async MFT + fallback SW)
+│  ├─ kr-codec-soft/      # OpenH264, só para testes do pipeline no Linux/CI
 │  ├─ kr-input-win/       # SendInput, mapeamento de scancodes, hook LL
 │  └─ kr-service-win/     # (Etapa 8) serviço Windows / secure desktop
 ├─ packages/
@@ -118,6 +119,7 @@ Princípio: tudo que é específico de Windows fica em crates `*-win` atrás de 
 - **Codificação:** MFT H.264 de hardware (NVENC, Quick Sync ou AMF expostos via Media Foundation) em modo assíncrono, com `CODECAPI_AVLowLatencyMode`, sem B-frames, GOP longo + keyframe sob demanda (PLI/FIR), bitrate adaptativo (CBR/VBR com teto). Fallback: MFT de software da Microsoft.
 - **Cursor:** enviado separadamente pelo DataChannel (forma + posição), desenhado localmente no viewer, o que reduz a latência percebida.
 - **Meta de latência:** < 80 ms ponta a ponta em LAN e < 150 ms via internet P2P, medidos no overlay de métricas.
+- **Implementado na Etapa 4 (MVP):** captura DXGI copiada para a CPU (staging) → BGRA→NV12 na CPU, em paralelo (≈2 ms em 1080p; redução bilinear para no máximo 1920×1080) → MFT H.264 de hardware assíncrono, com reserva automática no MFT de software → trilha `TrackLocalStaticSample` (H.264 `42e01f`). Keyframe sob demanda via PLI/FIR (interceptor que entrega o RTCP à aplicação) e pela mensagem `keyframe` do DataChannel; keyframe periódico a cada 10 s; com a tela parada, reenvia 1 quadro/s. O viewer usa `jitterBufferTarget = 0`. Conversão na GPU e controle de bitrate adaptativo ficam para a Etapa 7.
 
 ### 2.5 Entrada remota
 

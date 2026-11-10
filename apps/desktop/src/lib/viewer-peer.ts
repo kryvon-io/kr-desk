@@ -170,10 +170,14 @@ export class ViewerPeer {
   }
 }
 
+type CodecCapability = NonNullable<
+  ReturnType<typeof RTCRtpReceiver.getCapabilities>
+>["codecs"][number];
+
 /** Coloca H.264 constrained baseline (`42e01f`) no topo da oferta. */
 function preferH264(transceiver: RTCRtpTransceiver) {
   const codecs = RTCRtpReceiver.getCapabilities("video")?.codecs ?? [];
-  const score = (c: RTCRtpCodecCapability) => {
+  const score = (c: CodecCapability) => {
     if (c.mimeType.toLowerCase() !== "video/h264") return 2;
     const fmtp = c.sdpFmtpLine ?? "";
     return fmtp.includes("profile-level-id=42e01f") && fmtp.includes("packetization-mode=1")

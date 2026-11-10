@@ -58,7 +58,8 @@ export function ConnectCard({ outgoing, online, inSession, onConnect, onCancel, 
           <div className="flex items-center justify-between gap-2 text-muted-foreground">
             <span className="flex items-center gap-2">
               <Loader2 className="size-4 animate-spin" />
-              Aguardando autorização em {formatId(outgoing.targetId)}…
+              Aguardando autorização em{" "}
+              <span className="whitespace-nowrap">{formatId(outgoing.targetId)}</span>…
             </span>
             <Button variant="ghost" size="sm" onClick={() => onCancel(outgoing.requestId)}>
               <X /> Cancelar
@@ -68,8 +69,9 @@ export function ConnectCard({ outgoing, online, inSession, onConnect, onCancel, 
         {outgoing.kind === "accepted" && (
           <p className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
             <CircleCheck className="size-4" />
-            Acesso autorizado por {formatId(outgoing.peerId)}. A transmissão de tela chega na Etapa
-            4.
+            Acesso autorizado por{" "}
+            <span className="whitespace-nowrap">{formatId(outgoing.peerId)}</span>. Abrindo a tela
+            remota…
           </p>
         )}
         {outgoing.kind === "failed" && (

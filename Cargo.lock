@@ -2238,16 +2238,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "kr-capture-win"
+version = "0.4.0"
+dependencies = [
+ "kr-core",
+ "tracing",
+ "windows",
+]
+
+[[package]]
 name = "kr-codec-soft"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "kr-core",
  "openh264",
 ]
 
 [[package]]
+name = "kr-codec-win"
+version = "0.4.0"
+dependencies = [
+ "kr-core",
+ "tracing",
+ "windows",
+]
+
+[[package]]
 name = "kr-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "kr-proto",
  "serde",
@@ -2258,8 +2276,10 @@ dependencies = [
 
 [[package]]
 name = "kr-desk"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
+ "kr-capture-win",
+ "kr-codec-win",
  "kr-core",
  "kr-identity",
  "kr-proto",
@@ -2278,7 +2298,7 @@ dependencies = [
 
 [[package]]
 name = "kr-identity"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek",
@@ -2292,7 +2312,7 @@ dependencies = [
 
 [[package]]
 name = "kr-proto"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek",
@@ -2302,7 +2322,7 @@ dependencies = [
 
 [[package]]
 name = "kr-signaling"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "futures-util",
  "getrandom 0.4.3",
@@ -2318,7 +2338,7 @@ dependencies = [
 
 [[package]]
 name = "kr-transport"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "bytes",

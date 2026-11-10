@@ -28,6 +28,7 @@ interface HostP2pStatus {
   state: PeerState;
   rttMs: number | null;
   route: RouteInfo | null;
+  sharing: boolean;
 }
 
 /** Converte o erro do `invoke` (string vinda do Rust) em texto. */
@@ -47,11 +48,14 @@ export function useSignaling() {
   const outgoingId = useRef<string | null>(null);
   /** Conexão WebRTC quando este computador é o viewer. */
   const viewer = useRef<{ requestId: string; peer: ViewerPeer } | null>(null);
+  /** Vídeo da tela remota (viewer) e a conexão que o recebe. */
+  const [remote, setRemote] = useState<{ peer: ViewerPeer; stream: MediaStream } | null>(null);
 
   const closeViewer = useCallback((requestId?: string) => {
     if (viewer.current && (!requestId || viewer.current.requestId === requestId)) {
       viewer.current.peer.close();
       viewer.current = null;
+      setRemote(null);
     }
   }, []);
 
@@ -69,6 +73,9 @@ export function useSignaling() {
         onState: (s) => update({ state: s }),
         onRtt: (ms) => update({ rttMs: ms }),
         onRoute: (route) => update({ route }),
+        onVideo: (stream) => {
+          if (viewer.current?.peer === peer) setRemote({ peer, stream });
+        },
       });
       viewer.current = { requestId, peer };
       peer.start().catch((err: unknown) => {
@@ -110,6 +117,7 @@ export function useSignaling() {
             state: e.payload.state,
             rttMs: e.payload.rttMs,
             route: e.payload.route,
+            sharing: e.payload.sharing,
           }),
         ),
       );
@@ -165,6 +173,7 @@ export function useSignaling() {
 
   return {
     state,
+    remote,
     deviceName,
     tauri,
     connectTo,

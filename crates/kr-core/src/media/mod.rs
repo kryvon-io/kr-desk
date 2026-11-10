@@ -15,7 +15,7 @@ use std::time::Duration;
 pub use convert::{bgra_to_nv12, fit_within};
 pub use pipeline::{
     EncodedFrame, EncoderFactory, PipelineConfig, PipelineControl, PipelineError, PipelineStats,
-    run_pipeline,
+    SourceFactory, run_pipeline,
 };
 
 /// Quadro capturado em BGRA 8 bits (formato nativo da Desktop Duplication).
@@ -91,8 +91,9 @@ pub enum CaptureError {
     Fatal(String),
 }
 
-/// Fonte de quadros da tela.
-pub trait FrameSource: Send {
+/// Fonte de quadros da tela. Não exige `Send`: implementações com COM/DXGI
+/// são criadas e usadas na própria thread do pipeline (ver [`SourceFactory`]).
+pub trait FrameSource {
     /// Espera até `timeout` por um quadro novo. `Ok(None)` significa que a
     /// tela não mudou nesse intervalo.
     fn capture(&mut self, timeout: Duration) -> Result<Option<&BgraFrame>, CaptureError>;
@@ -115,8 +116,9 @@ pub struct EncoderConfig {
 }
 
 /// Encoder H.264 que produz Annex-B (start codes `00 00 00 01`), com SPS/PPS
-/// antes de cada keyframe.
-pub trait VideoEncoder: Send {
+/// antes de cada keyframe. Criado na thread do pipeline por uma
+/// [`EncoderFactory`].
+pub trait VideoEncoder {
     fn encode(&mut self, frame: &Nv12Frame, keyframe: bool) -> Result<Vec<u8>, EncodeError>;
 
     /// Nome para logs (ex.: "NVIDIA H.264 Encoder MFT").

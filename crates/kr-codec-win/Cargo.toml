@@ -1,0 +1,23 @@
+[package]
+name = "kr-codec-win"
+description = "Encoder H.264 do KR Desk no Windows (Media Foundation)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kr-core.workspace = true
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+  "Win32_Media_MediaFoundation",
+  "Win32_System_Com",
+  "Win32_System_Ole",
+  "Win32_System_Variant",
+] }
+
+[lints]
+workspace = true

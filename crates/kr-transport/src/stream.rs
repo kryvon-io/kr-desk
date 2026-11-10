@@ -6,8 +6,8 @@ use std::thread::JoinHandle;
 
 use bytes::Bytes;
 use kr_core::media::{
-    EncodedFrame, EncoderFactory, FrameSource, PipelineConfig, PipelineControl, PipelineError,
-    PipelineStats, run_pipeline,
+    EncodedFrame, EncoderFactory, PipelineConfig, PipelineControl, PipelineError, PipelineStats,
+    SourceFactory, run_pipeline,
 };
 use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
@@ -26,11 +26,11 @@ pub struct VideoStream {
 }
 
 impl VideoStream {
-    /// Inicia captura e codificação numa thread própria e o envio numa task
-    /// do runtime tokio atual.
+    /// Inicia captura e codificação numa thread própria (onde `source` e
+    /// `encoder` são criados) e o envio numa task do runtime tokio atual.
     pub fn start(
         video: VideoSender,
-        source: Box<dyn FrameSource>,
+        source: SourceFactory,
         encoder: EncoderFactory,
         config: PipelineConfig,
     ) -> std::io::Result<Self> {
@@ -54,6 +54,14 @@ impl VideoStream {
             .name("kr-video".into())
             .spawn(move || {
                 let keyframes = pipeline_control.clone();
+                let source = match source() {
+                    Ok(s) => s,
+                    Err(err) => {
+                        error!(%err, "não foi possível abrir a captura");
+                        pipeline_control.stop();
+                        return Err(err.into());
+                    }
+                };
                 let result = run_pipeline(source, encoder, config, pipeline_control, |frame| {
                     match tx.try_send(frame) {
                         Ok(()) => true,

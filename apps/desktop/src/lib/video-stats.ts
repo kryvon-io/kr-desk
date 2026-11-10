@@ -10,27 +10,27 @@ export interface VideoSample {
   framesDropped: number;
   packetsLost: number;
   pliCount: number;
-  frameWidth?: number;
-  frameHeight?: number;
+  frameWidth?: number | undefined;
+  frameHeight?: number | undefined;
   jitterBufferDelay: number;
   jitterBufferEmittedCount: number;
   totalDecodeTime: number;
-  decoderImplementation?: string;
+  decoderImplementation?: string | undefined;
 }
 
 export interface VideoMetrics {
   fps: number;
   kbps: number;
-  width?: number;
-  height?: number;
+  width?: number | undefined;
+  height?: number | undefined;
   framesDecoded: number;
   packetsLost: number;
   pliCount: number;
   /** Atraso médio no buffer de jitter no intervalo, em ms. */
-  jitterMs?: number;
+  jitterMs?: number | undefined;
   /** Tempo médio de decodificação por quadro no intervalo, em ms. */
-  decodeMs?: number;
-  decoder?: string;
+  decodeMs?: number | undefined;
+  decoder?: string | undefined;
 }
 
 interface InboundRtp {
@@ -41,12 +41,12 @@ interface InboundRtp {
   framesDropped?: number;
   packetsLost?: number;
   pliCount?: number;
-  frameWidth?: number;
-  frameHeight?: number;
+  frameWidth?: number | undefined;
+  frameHeight?: number | undefined;
   jitterBufferDelay?: number;
   jitterBufferEmittedCount?: number;
   totalDecodeTime?: number;
-  decoderImplementation?: string;
+  decoderImplementation?: string | undefined;
 }
 
 export function sampleFromStats(stats: RTCStatsReport, at: number): VideoSample | null {

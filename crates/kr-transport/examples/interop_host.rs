@@ -13,7 +13,7 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use kr_codec_soft::OpenH264Encoder;
 use kr_core::media::pattern::TestPattern;
-use kr_core::media::{EncoderFactory, PipelineConfig, VideoEncoder};
+use kr_core::media::{EncoderFactory, FrameSource, PipelineConfig, VideoEncoder};
 use kr_transport::{HostPeer, PeerEvent, VideoStream};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
@@ -28,7 +28,7 @@ fn start_video(host: &HostPeer) -> VideoStream {
     };
     VideoStream::start(
         host.video(),
-        Box::new(TestPattern::new(640, 360, 30)),
+        Box::new(|| Ok(Box::new(TestPattern::new(640, 360, 30)) as Box<dyn FrameSource>)),
         factory,
         config,
     )

@@ -15,6 +15,9 @@ use super::{
     fit_within, is_keyframe,
 };
 
+/// Abre a fonte de captura (chamada na thread do pipeline).
+pub type SourceFactory = Box<dyn FnOnce() -> Result<Box<dyn FrameSource>, CaptureError> + Send>;
+
 /// Cria um encoder para a resolução pedida (chamado de novo se a tela mudar
 /// de tamanho).
 pub type EncoderFactory =

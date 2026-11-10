@@ -50,6 +50,8 @@ export interface P2pStatus {
   state: PeerState;
   rttMs: number | null;
   route: RouteInfo | null;
+  /** Host: a tela deste computador está sendo transmitida. */
+  sharing: boolean;
 }
 
 export interface IncomingRequest {
@@ -74,7 +76,7 @@ export interface ActiveSession {
   p2p: P2pStatus;
 }
 
-const P2P_INITIAL: P2pStatus = { state: "connecting", rttMs: null, route: null };
+const P2P_INITIAL: P2pStatus = { state: "connecting", rttMs: null, route: null, sharing: false };
 
 export interface SignalingState {
   status: ConnectionStatus;
@@ -113,6 +115,7 @@ export type Action =
       state?: PeerState;
       rttMs?: number | null;
       route?: RouteInfo | null;
+      sharing?: boolean;
     };
 
 const ERROR_TEXT: Partial<Record<ErrorCode, string>> = {
@@ -177,6 +180,7 @@ export function reducer(state: SignalingState, action: Action): SignalingState {
       if (action.state !== undefined) p2p.state = action.state;
       if (action.rttMs !== undefined) p2p.rttMs = action.rttMs;
       if (action.route !== undefined) p2p.route = action.route;
+      if (action.sharing !== undefined) p2p.sharing = action.sharing;
       return { ...state, active: { ...state.active, p2p } };
     }
     case "message":

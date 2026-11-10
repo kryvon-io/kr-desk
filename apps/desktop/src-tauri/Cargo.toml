@@ -16,9 +16,15 @@ tauri-build.workspace = true
 
 [dependencies]
 kr-core.workspace = true
+kr-identity.workspace = true
+kr-proto.workspace = true
+kr-signaling.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri.workspace = true
+tauri-plugin-single-instance.workspace = true
+tracing.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true

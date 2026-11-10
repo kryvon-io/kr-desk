@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "apps/desktop/src-tauri"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.97"
 license = "AGPL-3.0-only"
@@ -12,13 +12,25 @@ repository = "https://github.com/kryvon-io/kr-desk"
 [workspace.dependencies]
 kr-proto = { path = "crates/kr-proto" }
 kr-core = { path = "crates/kr-core" }
+kr-identity = { path = "crates/kr-identity" }
+kr-signaling = { path = "crates/kr-signaling" }
 
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 thiserror = "2.0.21"
+base64 = "0.23.1"
+ed25519-dalek = "3.0.0"
+getrandom = "0.4.3"
+zeroize = "1.9.1"
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+tracing = "0.1.44"
+uuid = { version = "1.29.2", features = ["v4"] }
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 
-tauri = { version = "2.12.5", features = [] }
+tauri = { version = "2.12.5", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2.5.5"
 tauri-build = { version = "2.7.4", features = [] }
 
 [workspace.lints.rust]

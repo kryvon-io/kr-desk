@@ -73,9 +73,24 @@ jobs:
       - name: Instalar toolchain (rust-toolchain.toml)
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - run: cargo fmt --all --check
-      - run: cargo clippy -p kr-proto -p kr-core --all-targets -- -D warnings
-      - run: cargo test -p kr-proto -p kr-core
+      - run: cargo clippy -p kr-proto -p kr-core -p kr-identity -p kr-signaling --all-targets -- -D warnings
+      # O servidor TypeScript (em memória) valida o cliente Rust de ponta a ponta.
+      - name: Subir servidor de sinalização local
+        run: |
+          PORT=3100 WS_MAX_LIFETIME_MS=3000 pnpm --filter @kr-desk/server start > server.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:3100/health && exit 0; sleep 1; done
+          cat server.log; exit 1
+      - name: Testes (inclui cliente Rust x servidor real)
+        env:
+          KR_SIGNALING_URL: ws://127.0.0.1:3100/ws
+        run: cargo test -p kr-proto -p kr-core -p kr-identity -p kr-signaling -- --include-ignored
 
   windows:
     name: Windows — clippy, testes e instalador NSIS

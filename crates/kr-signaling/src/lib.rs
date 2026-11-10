@@ -124,11 +124,22 @@ impl SignalingHandle {
     }
 }
 
+/// Instala o provedor de criptografia do rustls (uma vez por processo).
+/// Sem isso, a primeira conexão `wss://` entra em pânico.
+pub fn install_crypto_provider() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        // Erro só se outro provedor já foi instalado — o que também serve.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 /// Inicia o cliente numa task do Tokio.
 pub fn spawn(
     config: SignalingConfig,
     identity: Arc<DeviceIdentity>,
 ) -> (SignalingHandle, mpsc::UnboundedReceiver<SignalingEvent>) {
+    install_crypto_provider();
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     let (ev_tx, ev_rx) = mpsc::unbounded_channel();
     let online = Arc::new(AtomicBool::new(false));

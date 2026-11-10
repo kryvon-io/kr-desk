@@ -308,3 +308,25 @@ async fn fica_tentando_quando_o_servidor_nao_existe() {
     assert!(retry_in_ms <= 200);
     handle.shutdown();
 }
+
+/// Regressão: conectar via `wss://` não pode entrar em pânico (o rustls exige
+/// um provedor de criptografia instalado). Deve só ficar offline e tentar de novo.
+#[tokio::test]
+async fn wss_sem_servidor_tls_nao_derruba_o_processo() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((tcp, _)) = listener.accept().await {
+            drop(tcp);
+        }
+    });
+    let (handle, mut events) = spawn(
+        config(&format!("wss://{addr}/ws")),
+        Arc::new(DeviceIdentity::generate().unwrap()),
+    );
+    next_event(&mut events, |e| {
+        matches!(e, SignalingEvent::Status(ConnectionStatus::Offline { .. }))
+    })
+    .await;
+    handle.shutdown();
+}

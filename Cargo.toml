@@ -24,6 +24,9 @@ getrandom = "0.4.3"
 zeroize = "1.9.1"
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+# Provedor de criptografia do rustls: `ring` compila no Windows MSVC sem cmake/nasm.
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std", "env-filter", "ansi"] }
 tracing = "0.1.44"
 uuid = { version = "1.29.2", features = ["v4"] }
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
@@ -43,4 +46,6 @@ all = { level = "warn", priority = -1 }
 codegen-units = 1
 lto = "thin"
 strip = "symbols"
-panic = "abort"
+# "unwind": um pânico numa task não derruba o app inteiro (com "abort", o app
+# fechava sem aviso).
+panic = "unwind"

@@ -1,6 +1,7 @@
 //! Binário Tauri do KR Desk. Mantido fino: a lógica fica nos crates `kr-*`.
 
 mod commands;
+mod logging;
 mod signaling;
 mod tray;
 
@@ -30,6 +31,8 @@ pub fn run() {
         }))
         .setup(|app| {
             let data_dir = app.path().app_local_data_dir()?;
+            logging::init(&data_dir.join("logs"));
+            tracing::info!(version = env!("CARGO_PKG_VERSION"), "KR Desk iniciando");
             let identity = Arc::new(DeviceIdentity::load_or_create(&data_dir, &SystemProtector)?);
             tracing::info!(public_key = %identity.public_key_b64(), "identidade carregada");
 

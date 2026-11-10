@@ -4,7 +4,7 @@
 //! (hardware, com reserva em software). Em outras plataformas o app compila
 //! (para desenvolvimento), mas não transmite vídeo.
 
-use kr_transport::{VideoSender, VideoStream};
+use kr_transport::{ControlSender, VideoSender, VideoStream};
 
 /// Variável de ambiente para forçar o encoder de software (diagnóstico):
 /// `KR_DESK_ENCODER=software`.
@@ -12,7 +12,7 @@ pub const ENV_ENCODER: &str = "KR_DESK_ENCODER";
 
 /// Começa a transmitir a tela pela trilha de vídeo.
 #[cfg(windows)]
-pub fn start(video: VideoSender) -> Result<VideoStream, String> {
+pub fn start(video: VideoSender, cursor: ControlSender) -> Result<VideoStream, String> {
     use kr_capture_win::DxgiCapture;
     use kr_codec_win::{EncoderPreference, auto_encoder};
     use kr_core::media::{FrameSource, PipelineConfig};
@@ -26,12 +26,13 @@ pub fn start(video: VideoSender) -> Result<VideoStream, String> {
         Box::new(|| DxgiCapture::primary().map(|c| Box::new(c) as Box<dyn FrameSource>)),
         auto_encoder(preference),
         PipelineConfig::default(),
+        Some(cursor),
     )
     .map_err(|e| e.to_string())
 }
 
 #[cfg(not(windows))]
-pub fn start(_video: VideoSender) -> Result<VideoStream, String> {
+pub fn start(_video: VideoSender, _cursor: ControlSender) -> Result<VideoStream, String> {
     let _ = ENV_ENCODER;
     Err("transmissão de tela só existe no Windows".into())
 }

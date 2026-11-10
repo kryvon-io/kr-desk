@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use kr_proto::IceServer;
-use kr_proto::control::{CONTROL_LABEL, CandidateType, ControlMessage};
+use kr_proto::control::{CONTROL_LABEL, CandidateType, ControlMessage, INPUT_LABEL};
 use rtc::interceptor::Slot;
 use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 use serde::{Deserialize, Serialize};
@@ -117,6 +117,37 @@ pub enum PeerEvent {
     ControlOpen,
     /// O viewer pediu um keyframe (PLI/FIR no RTCP ou `keyframe` no controle).
     KeyframeRequest,
+    /// Entrada remota (mouse/teclado) do viewer. Ao fechar o canal de
+    /// controle, chega um `ReleaseAll`.
+    Input(ControlMessage),
+}
+
+fn is_input(msg: &ControlMessage) -> bool {
+    matches!(
+        msg,
+        ControlMessage::MouseMove { .. }
+            | ControlMessage::MouseButton { .. }
+            | ControlMessage::Wheel { .. }
+            | ControlMessage::Key { .. }
+            | ControlMessage::ReleaseAll
+    )
+}
+
+/// Envia mensagens ao viewer pelo DataChannel de controle. Não segura o
+/// canal de eventos do peer (pode ficar com quem consome os eventos).
+#[derive(Clone, Default)]
+pub struct ControlSender {
+    dc: Arc<Mutex<Option<Arc<dyn DataChannel>>>>,
+}
+
+impl ControlSender {
+    pub async fn send(&self, msg: &ControlMessage) -> bool {
+        let dc = self.dc.lock().await.clone();
+        match dc {
+            Some(dc) => dc.send_text(&msg.to_json()).await.is_ok(),
+            None => false,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -155,7 +186,7 @@ pub struct HostPeer {
 /// Estado compartilhado com os callbacks do webrtc-rs.
 struct Shared {
     events: mpsc::UnboundedSender<PeerEvent>,
-    control: Mutex<Option<Arc<dyn DataChannel>>>,
+    control: ControlSender,
     ping_seq: AtomicU64,
     /// Ping em voo: (número, quando foi enviado).
     in_flight: std::sync::Mutex<Option<(u64, Instant)>>,
@@ -198,12 +229,16 @@ impl PeerConnectionEventHandler for Handler {
 
     async fn on_data_channel(&self, dc: Arc<dyn DataChannel>) {
         let label = dc.label().await.unwrap_or_default();
-        if label != CONTROL_LABEL {
-            debug!(%label, "DataChannel desconhecido ignorado");
-            return;
+        match label.as_str() {
+            CONTROL_LABEL => {
+                *self.shared.control.dc.lock().await = Some(dc.clone());
+                tokio::spawn(control_loop(dc, self.shared.clone()));
+            }
+            INPUT_LABEL => {
+                tokio::spawn(input_loop(dc, self.shared.clone()));
+            }
+            _ => debug!(%label, "DataChannel desconhecido ignorado"),
         }
-        *self.shared.control.lock().await = Some(dc.clone());
-        tokio::spawn(control_loop(dc, self.shared.clone()));
     }
 }
 
@@ -276,6 +311,8 @@ async fn control_loop(dc: Arc<dyn DataChannel>, shared: Arc<Shared>) {
                         }));
                     }
                     Ok(ControlMessage::Keyframe) => shared.emit(PeerEvent::KeyframeRequest),
+                    Ok(msg) if is_input(&msg) => shared.emit(PeerEvent::Input(msg)),
+                    Ok(other) => debug!(?other, "mensagem de controle ignorada"),
                     Err(err) => debug!(%err, "mensagem de controle desconhecida"),
                 }
             }
@@ -285,6 +322,28 @@ async fn control_loop(dc: Arc<dyn DataChannel>, shared: Arc<Shared>) {
     }
     if let Some(t) = pinger {
         t.abort();
+    }
+    // Sem canal de controle não há como soltar teclas depois: solta agora.
+    shared.emit(PeerEvent::Input(ControlMessage::ReleaseAll));
+}
+
+/// Lê o DataChannel `input` (movimentos do mouse, não confiável).
+async fn input_loop(dc: Arc<dyn DataChannel>, shared: Arc<Shared>) {
+    while let Some(event) = dc.poll().await {
+        match event {
+            DataChannelEvent::OnMessage(msg) => {
+                let Ok(text) = std::str::from_utf8(&msg.data) else {
+                    continue;
+                };
+                if let Ok(msg) = serde_json::from_str::<ControlMessage>(text)
+                    && is_input(&msg)
+                {
+                    shared.emit(PeerEvent::Input(msg));
+                }
+            }
+            DataChannelEvent::OnClose => break,
+            _ => {}
+        }
     }
 }
 
@@ -296,7 +355,7 @@ impl HostPeer {
     ) -> Result<Self> {
         let shared = Arc::new(Shared {
             events,
-            control: Mutex::new(None),
+            control: ControlSender::default(),
             ping_seq: AtomicU64::new(1),
             in_flight: std::sync::Mutex::new(None),
         });
@@ -390,11 +449,12 @@ impl HostPeer {
 
     /// Envia uma mensagem de controle ao viewer, se o canal estiver aberto.
     pub async fn send_control(&self, msg: &ControlMessage) -> bool {
-        let dc = self.shared.control.lock().await.clone();
-        match dc {
-            Some(dc) => dc.send_text(&msg.to_json()).await.is_ok(),
-            None => false,
-        }
+        self.shared.control.send(msg).await
+    }
+
+    /// Envio pelo canal de controle sem manter o peer vivo.
+    pub fn control_sender(&self) -> ControlSender {
+        self.shared.control.clone()
     }
 
     pub async fn close(&self) {

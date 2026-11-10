@@ -4,7 +4,9 @@
 //! cada mensagem de texto é um `SignalPayload`, exceto `done`, que o viewer
 //! manda quando já mediu a latência, viu a rota e decodificou vídeo.
 //!
-//! Quando o canal P2P abre, transmite um padrão de teste em H.264 (OpenH264).
+//! Quando o canal P2P abre, transmite um padrão de teste em H.264 (OpenH264)
+//! e um cursor. O viewer manda movimentos, um clique e uma tecla, que passam
+//! por um `InputController` com um destino que só registra.
 //! Imprime `LISTENING <porta>` ao subir e `INTEROP_OK ...` no sucesso. Sai com
 //! código 1 após 30 s sem sucesso.
 
@@ -12,12 +14,37 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use kr_codec_soft::OpenH264Encoder;
+use kr_core::input::{InputController, InputSink};
 use kr_core::media::pattern::TestPattern;
 use kr_core::media::{EncoderFactory, FrameSource, PipelineConfig, VideoEncoder};
 use kr_transport::{HostPeer, PeerEvent, VideoStream};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
+
+/// Destino de entrada que só registra o que recebeu.
+#[derive(Default)]
+struct Recorder {
+    moves: u32,
+    buttons: u32,
+    keys: u32,
+    wheels: u32,
+}
+
+impl InputSink for Recorder {
+    fn move_to(&mut self, _x: u16, _y: u16) {
+        self.moves += 1;
+    }
+    fn button(&mut self, _b: kr_proto::control::MouseButton, _down: bool) {
+        self.buttons += 1;
+    }
+    fn wheel(&mut self, _dx: i32, _dy: i32) {
+        self.wheels += 1;
+    }
+    fn key(&mut self, _code: u16, _ext: bool, _down: bool) {
+        self.keys += 1;
+    }
+}
 
 fn start_video(host: &HostPeer) -> VideoStream {
     let factory: EncoderFactory =
@@ -31,6 +58,7 @@ fn start_video(host: &HostPeer) -> VideoStream {
         Box::new(|| Ok(Box::new(TestPattern::new(640, 360, 30)) as Box<dyn FrameSource>)),
         factory,
         config,
+        Some(host.control_sender()),
     )
     .expect("thread de vídeo")
 }
@@ -50,6 +78,7 @@ async fn main() {
         let mut rtt: Option<Duration> = None;
         let mut route: Option<kr_transport::Route> = None;
         let mut keyframe_requests = 0u32;
+        let mut input = InputController::new(Recorder::default());
         let mut video: Option<VideoStream> = None;
 
         loop {
@@ -59,13 +88,23 @@ async fn main() {
                         let (Some(rtt), Some(route)) = (rtt, route.as_ref()) else {
                             break Err("viewer terminou antes do host medir RTT/rota".to_string());
                         };
+                        let rec = input.sink();
+                        if rec.moves == 0 || rec.buttons < 2 || rec.keys < 2 || rec.wheels == 0 {
+                            break Err(format!(
+                                "entrada incompleta: {} movimentos, {} botões, {} teclas, {} rodas",
+                                rec.moves, rec.buttons, rec.keys, rec.wheels
+                            ));
+                        }
                         let msg = format!(
-                            "INTEROP_OK rtt_ms={} route={:?}/{:?}/{} keyframe_requests={}",
+                            "INTEROP_OK rtt_ms={} route={:?}/{:?}/{} keyframe_requests={} input=moves:{}/buttons:{}/keys:{}",
                             rtt.as_millis(),
                             route.local,
                             route.remote,
                             route.protocol,
                             keyframe_requests,
+                            rec.moves,
+                            rec.buttons,
+                            rec.keys,
                         );
                         drop(video.take());
                         host.close().await;
@@ -92,6 +131,9 @@ async fn main() {
                     }
                     PeerEvent::Rtt(d) => rtt = Some(d),
                     PeerEvent::Route(r) => route = Some(r),
+                    PeerEvent::Input(msg) => {
+                        input.handle(&msg);
+                    }
                     PeerEvent::KeyframeRequest => {
                         keyframe_requests += 1;
                         if let Some(v) = &video {

@@ -91,6 +91,21 @@ pub enum CaptureError {
     Fatal(String),
 }
 
+/// Mudança no cursor do host, enviada ao viewer pelo DataChannel (o viewer
+/// desenha o cursor localmente, sem esperar o vídeo).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CursorUpdate {
+    /// Nova forma em RGBA (não pré-multiplicado).
+    Shape {
+        width: u32,
+        height: u32,
+        hot_x: u32,
+        hot_y: u32,
+        rgba: Vec<u8>,
+    },
+    Visible(bool),
+}
+
 /// Fonte de quadros da tela. Não exige `Send`: implementações com COM/DXGI
 /// são criadas e usadas na própria thread do pipeline (ver [`SourceFactory`]).
 pub trait FrameSource {
@@ -100,6 +115,11 @@ pub trait FrameSource {
 
     /// Nome para logs (ex.: "DXGI Desktop Duplication").
     fn name(&self) -> String;
+
+    /// Próxima mudança do cursor observada desde a última chamada.
+    fn take_cursor(&mut self) -> Option<CursorUpdate> {
+        None
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

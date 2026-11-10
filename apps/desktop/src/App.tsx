@@ -15,6 +15,7 @@ export default function App() {
   const {
     state,
     remote,
+    remoteCursor,
     deviceName,
     tauri,
     connectTo,
@@ -44,6 +45,8 @@ export default function App() {
           session={state.active}
           peer={remote?.peer ?? null}
           stream={remote?.stream ?? null}
+          cursor={remoteCursor}
+          tauri={tauri}
           onEnd={endSession}
         />
         <IncomingRequestDialog request={state.incoming[0]} onAnswer={respond} />

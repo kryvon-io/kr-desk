@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::{BgraFrame, CaptureError, FrameSource};
+use super::{BgraFrame, CaptureError, CursorUpdate, FrameSource};
 
 /// Gradiente com uma faixa vertical que anda a cada quadro.
 pub struct TestPattern {
@@ -10,6 +10,7 @@ pub struct TestPattern {
     interval: Duration,
     next: Instant,
     n: u32,
+    cursor_sent: bool,
 }
 
 impl TestPattern {
@@ -19,6 +20,7 @@ impl TestPattern {
             interval: Duration::from_secs(1) / fps.max(1),
             next: Instant::now(),
             n: 0,
+            cursor_sent: false,
         }
     }
 
@@ -60,5 +62,20 @@ impl FrameSource for TestPattern {
 
     fn name(&self) -> String {
         "padrão de teste".into()
+    }
+
+    /// Um cursor 2×2 vermelho, uma única vez.
+    fn take_cursor(&mut self) -> Option<CursorUpdate> {
+        if self.cursor_sent {
+            return None;
+        }
+        self.cursor_sent = true;
+        Some(CursorUpdate::Shape {
+            width: 2,
+            height: 2,
+            hot_x: 0,
+            hot_y: 0,
+            rgba: [255, 0, 0, 255].repeat(4),
+        })
     }
 }

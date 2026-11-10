@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use super::{
-    CaptureError, EncodeError, EncoderConfig, FrameSource, Nv12Frame, VideoEncoder, bgra_to_nv12,
-    fit_within, is_keyframe,
+    CaptureError, CursorUpdate, EncodeError, EncoderConfig, FrameSource, Nv12Frame, VideoEncoder,
+    bgra_to_nv12, fit_within, is_keyframe,
 };
 
 /// Abre a fonte de captura (chamada na thread do pipeline).
@@ -128,6 +128,7 @@ pub fn run_pipeline(
     config: PipelineConfig,
     control: Arc<PipelineControl>,
     mut sink: impl FnMut(EncodedFrame) -> bool,
+    mut on_cursor: impl FnMut(CursorUpdate),
 ) -> Result<PipelineStats, PipelineError> {
     let frame_interval = Duration::from_secs(1) / config.fps.max(1);
     let mut stats = PipelineStats::default();
@@ -146,6 +147,10 @@ pub fn run_pipeline(
             std::thread::sleep(next_capture - now);
         }
         let iteration = Instant::now();
+        // Mudanças do cursor vistas na captura anterior.
+        while let Some(update) = source.take_cursor() {
+            on_cursor(update);
+        }
 
         let captured = match source.capture(POLL) {
             Ok(frame) => {
@@ -323,10 +328,17 @@ mod tests {
             frame: BgraFrame::new(2, 2),
         });
         let mut keys = Vec::new();
-        let result = run_pipeline(source, factory, config, PipelineControl::new(), |f| {
-            keys.push(f.keyframe);
-            true
-        });
+        let result = run_pipeline(
+            source,
+            factory,
+            config,
+            PipelineControl::new(),
+            |f| {
+                keys.push(f.keyframe);
+                true
+            },
+            |_| {},
+        );
         assert!(matches!(
             result,
             Err(PipelineError::Capture(CaptureError::Fatal(_)))
@@ -387,13 +399,20 @@ mod tests {
         });
         let mut keys = Vec::new();
         let c = control.clone();
-        let _ = run_pipeline(source, factory, fast(), control, |f| {
-            keys.push(f.keyframe);
-            if keys.len() == 1 {
-                c.request_keyframe();
-            }
-            true
-        });
+        let _ = run_pipeline(
+            source,
+            factory,
+            fast(),
+            control,
+            |f| {
+                keys.push(f.keyframe);
+                if keys.len() == 1 {
+                    c.request_keyframe();
+                }
+                true
+            },
+            |_| {},
+        );
         assert_eq!(keys, vec![true, true]);
     }
 
@@ -406,10 +425,17 @@ mod tests {
         });
         let source = Box::new(crate::media::pattern::TestPattern::new(16, 16, 1000));
         let mut n = 0;
-        let stats = run_pipeline(source, factory, fast(), PipelineControl::new(), |_| {
-            n += 1;
-            n < 3
-        })
+        let stats = run_pipeline(
+            source,
+            factory,
+            fast(),
+            PipelineControl::new(),
+            |_| {
+                n += 1;
+                n < 3
+            },
+            |_| {},
+        )
         .unwrap();
         assert_eq!(stats.frames, 3);
         assert_eq!(stats.keyframes, 1);

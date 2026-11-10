@@ -83,7 +83,7 @@ export function SessionBanner({
         </span>
         {session.role === "host" && session.p2p.sharing && (
           <span className="flex items-center gap-1.5 pl-6 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-            <Cast className="size-3.5" /> Sua tela está sendo transmitida
+            <Cast className="size-3.5" /> Sua tela está sendo transmitida e pode ser controlada
           </span>
         )}
       </div>

@@ -1,13 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { CloudflareTurn, PUBLIC_STUN } from "../src/turn.js";
+import { CloudflareTurn, PUBLIC_STUN, type FetchLike } from "../src/turn.js";
 
 const log = { warn: vi.fn() };
 
 function fakeFetch(status: number, body: unknown) {
-  return vi.fn(
-    async () => new Response(JSON.stringify(body), { status }),
-  ) as unknown as typeof fetch;
+  return vi.fn(async () => new Response(JSON.stringify(body), { status })) as unknown as FetchLike;
 }
 
 describe("CloudflareTurn", () => {

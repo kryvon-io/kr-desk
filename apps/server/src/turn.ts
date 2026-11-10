@@ -5,6 +5,11 @@ export interface TurnProvider {
   iceServers(): Promise<IceServer[]>;
 }
 
+const timeoutSignal = (ms: number): unknown =>
+  (globalThis as unknown as { AbortSignal: { timeout(ms: number): unknown } }).AbortSignal.timeout(
+    ms,
+  );
+
 export const PUBLIC_STUN: IceServer[] = [{ urls: ["stun:stun.cloudflare.com:3478"] }];
 
 /** Sem TURN configurado: só STUN (conexão direta, sem relay). */
@@ -13,6 +18,12 @@ export class StunOnly implements TurnProvider {
     return PUBLIC_STUN;
   }
 }
+
+/** Subconjunto do `fetch` usado aqui (independe dos tipos DOM do compilador). */
+export type FetchLike = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body: string; signal?: unknown },
+) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 
 export interface Logger {
   warn(obj: object, msg: string): void;
@@ -28,7 +39,7 @@ export class CloudflareTurn implements TurnProvider {
     private readonly apiToken: string,
     private readonly log: Logger,
     private readonly ttlSec = 12 * 60 * 60,
-    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly fetchImpl: FetchLike = (globalThis as unknown as { fetch: FetchLike }).fetch,
   ) {}
 
   async iceServers(): Promise<IceServer[]> {
@@ -42,7 +53,7 @@ export class CloudflareTurn implements TurnProvider {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ ttl: this.ttlSec }),
-          signal: AbortSignal.timeout(4000),
+          signal: timeoutSignal(4000),
         },
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Token somente leitura por padrão. PRs de forks nunca recebem segredos.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  js:
+    name: JS — formato, lint, tipos, testes, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm --filter @kr-desk/desktop build
+
+  rust-core:
+    name: Rust — crates multiplataforma (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Instalar toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy -p kr-proto -p kr-core --all-targets -- -D warnings
+      - run: cargo test -p kr-proto -p kr-core
+
+  windows:
+    name: Windows — clippy, testes e instalador NSIS
+    runs-on: windows-latest
+    needs: [js, rust-core]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Instalar toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: pnpm install --frozen-lockfile
+      # O Tauri embute o frontend na compilação, então ele precisa existir antes do clippy.
+      - run: pnpm --filter @kr-desk/desktop build
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - name: Gerar instalador (não assinado)
+        run: pnpm --filter @kr-desk/desktop tauri build --bundles nsis
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kr-desk-windows-x64-nsis
+          path: target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 14

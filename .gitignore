@@ -1,0 +1,27 @@
+# Dependências e builds
+node_modules/
+dist/
+target/
+.vercel/
+*.tsbuildinfo
+coverage/
+
+# Segredos — NUNCA versionar
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+
+# Tauri
+apps/desktop/src-tauri/gen/schemas/
+
+# Sistema / editores
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log

@@ -1,0 +1,6 @@
+pnpm-lock.yaml
+target/
+dist/
+LICENSE
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/icons/

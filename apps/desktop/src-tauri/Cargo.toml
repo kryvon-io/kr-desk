@@ -1,0 +1,24 @@
+[package]
+name = "kr-desk"
+description = "KR Desk — acesso remoto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "kr_desk_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+kr-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri.workspace = true
+
+[lints]
+workspace = true

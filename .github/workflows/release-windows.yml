@@ -1,0 +1,44 @@
+name: Release (Windows)
+
+# Só roda quando VOCÊ cria uma tag de versão (ex.: git tag v0.1.0 && git push --tags,
+# ou pela tela "Releases" do GitHub). Nunca roda a partir de pull requests.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Instalador NSIS → GitHub Release (rascunho)
+    runs-on: windows-latest
+    permissions:
+      contents: write # necessário para criar o Release
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Instalar toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: pnpm install --frozen-lockfile
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: pnpm tauri
+          args: --bundles nsis
+          tagName: ${{ github.ref_name }}
+          releaseName: KR Desk ${{ github.ref_name }}
+          releaseBody: |
+            Instalador para Windows 10/11 (64 bits).
+            ⚠️ Build ainda NÃO assinada: o SmartScreen mostrará um aviso — use "Mais informações → Executar assim mesmo".
+          releaseDraft: true
+          prerelease: true

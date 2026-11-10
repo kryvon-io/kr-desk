@@ -17,10 +17,13 @@ export async function depsFromEnv(env: NodeJS.ProcessEnv, log: Logger): Promise<
   else if (isProd) throw new Error("REDIS_URL é obrigatório em produção");
   else bus = new MemoryBus();
 
+  // O Prisma 8 envia parâmetros de inicialização (ex.: lc_monetary) que o pooler
+  // da Neon (PgBouncer) recusa; por isso usamos a conexão direta quando houver.
+  const databaseUrl = env["DATABASE_URL_UNPOOLED"] ?? env["DATABASE_URL"];
   let store: DeviceStore;
-  if (env["DATABASE_URL"]) {
+  if (databaseUrl) {
     const { createDb } = await import("./db/client.js");
-    store = new PrismaStore(createDb(env["DATABASE_URL"]));
+    store = new PrismaStore(createDb(databaseUrl));
   } else if (isProd) {
     throw new Error("DATABASE_URL é obrigatório em produção");
   } else {

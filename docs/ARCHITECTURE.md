@@ -193,7 +193,7 @@ MVP utilizável = Etapas 0–6. Etapas 7–9 levam a nível de produto.
 ### Infraestrutura provisionada (Etapa 1)
 
 - **Vercel:** projeto `kr-desk-server` (Root `apps/server`, Fluid, região `gru1`, Node 24.x — o Node 26 ainda não é oferecido; o servidor usa `temporal-polyfill` porque o Prisma 8 precisa de `Temporal`). Proteção de acesso só nos previews.
-- **Neon:** projeto `kr-desk` (São Paulo, Postgres 17). Variáveis `DATABASE_URL` (pooler) e `DATABASE_URL_UNPOOLED` (migrações) na Vercel.
+- **Neon:** projeto `kr-desk` (São Paulo, Postgres 17). Variáveis `DATABASE_URL` (pooler) e `DATABASE_URL_UNPOOLED` na Vercel. O servidor usa a **conexão direta**: o pooler da Neon recusa parâmetros de inicialização que o Prisma 8 envia (`lc_monetary`).
 - **Upstash Redis:** `kr-desk-redis` (Free, `gru1`), variável `REDIS_URL` na Vercel.
 - **TURN:** adiado. A Cloudflare exige cartão mesmo no plano grátis; o servidor usa só STUN (`stun.cloudflare.com`) até `CF_TURN_KEY_ID`/`CF_TURN_API_TOKEN` serem configurados — sem mudança de código.
 - **Migrações:** aplicadas automaticamente apenas em deploys de produção (`apps/server/scripts/vercel-build.mjs`).

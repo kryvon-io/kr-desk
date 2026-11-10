@@ -1,0 +1,241 @@
+[
+  {
+    "id": "schema.public",
+    "label": "Create schema \"public\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres"
+    },
+    "precheck": [],
+    "execute": [
+      {
+        "description": "Create schema \"public\"",
+        "sql": "CREATE SCHEMA IF NOT EXISTS \"public\"",
+        "params": []
+      }
+    ],
+    "postcheck": []
+  },
+  {
+    "id": "table.devices",
+    "label": "Create table \"devices\"",
+    "summary": "Creates table \"devices\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "table",
+        "name": "devices"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure table \"devices\" does not exist",
+        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
+        "params": ["\"public\".\"devices\""],
+        "expectation": {
+          "expects": "absent",
+          "object": "table \"devices\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "create table \"devices\"",
+        "sql": "CREATE TABLE \"public\".\"devices\" (\n  \"appVersion\" text NOT NULL,\n  \"createdAt\" timestamptz(3) DEFAULT (now()) NOT NULL,\n  \"id\" text NOT NULL,\n  \"lastSeenAt\" timestamptz(3) DEFAULT (now()) NOT NULL,\n  \"name\" text NOT NULL,\n  \"publicKey\" text NOT NULL,\n  PRIMARY KEY (\"id\")\n)",
+        "params": []
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify table \"devices\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_class\" AS \"c\" WHERE (\"c\".\"oid\" = to_regclass($1) AND (\"c\".\"relkind\" = $2 OR \"c\".\"relkind\" = $3))) AS \"result\"",
+        "params": ["\"public\".\"devices\"", "r", "p"],
+        "expectation": {
+          "expects": "present",
+          "object": "table \"devices\""
+        }
+      }
+    ]
+  },
+  {
+    "id": "table.session_logs",
+    "label": "Create table \"session_logs\"",
+    "summary": "Creates table \"session_logs\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "table",
+        "name": "session_logs"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure table \"session_logs\" does not exist",
+        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
+        "params": ["\"public\".\"session_logs\""],
+        "expectation": {
+          "expects": "absent",
+          "object": "table \"session_logs\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "create table \"session_logs\"",
+        "sql": "CREATE TABLE \"public\".\"session_logs\" (\n  \"acceptedAt\" timestamptz(3),\n  \"createdAt\" timestamptz(3) DEFAULT (now()) NOT NULL,\n  \"endReason\" text,\n  \"endedAt\" timestamptz(3),\n  \"hostId\" text NOT NULL,\n  \"id\" text NOT NULL,\n  \"status\" text NOT NULL,\n  \"viewerId\" text NOT NULL,\n  PRIMARY KEY (\"id\")\n)",
+        "params": []
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify table \"session_logs\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_class\" AS \"c\" WHERE (\"c\".\"oid\" = to_regclass($1) AND (\"c\".\"relkind\" = $2 OR \"c\".\"relkind\" = $3))) AS \"result\"",
+        "params": ["\"public\".\"session_logs\"", "r", "p"],
+        "expectation": {
+          "expects": "present",
+          "object": "table \"session_logs\""
+        }
+      }
+    ]
+  },
+  {
+    "id": "unique.devices.devices_publicKey_key",
+    "label": "Add unique constraint on \"devices\" (publicKey)",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "unique",
+        "name": "devices_publicKey_key",
+        "table": "devices"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure constraint \"devices_publicKey_key\" does not exist",
+        "sql": "SELECT NOT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
+        "params": ["devices_publicKey_key", "public", "\"public\".\"devices\""],
+        "expectation": {
+          "expects": "absent",
+          "object": "constraint \"devices_publicKey_key\" on \"devices\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "add unique constraint \"devices_publicKey_key\"",
+        "sql": "ALTER TABLE \"public\".\"devices\" ADD CONSTRAINT \"devices_publicKey_key\" UNIQUE (\"publicKey\")"
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify unique constraint \"devices_publicKey_key\" exists on (publicKey)",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3) AND \"c\".\"contype\" = $4 AND (SELECT coalesce(jsonb_agg(key_attribute.attname ORDER BY key_column.position), '[]'::jsonb) FROM unnest(\"c\".\"conkey\"::int2[]) WITH ORDINALITY AS key_column(attnum, position) JOIN pg_attribute key_attribute ON key_attribute.attrelid = \"c\".\"conrelid\" AND key_attribute.attnum = key_column.attnum) = ($5)::jsonb)) AS \"result\"",
+        "params": [
+          "devices_publicKey_key",
+          "public",
+          "\"public\".\"devices\"",
+          "u",
+          "[\"publicKey\"]"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "index.session_logs.session_logs_hostId_idx_05205577",
+    "label": "Create index \"session_logs_hostId_idx_05205577\" on \"session_logs\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "index",
+        "name": "session_logs_hostId_idx_05205577",
+        "table": "session_logs"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure index \"session_logs_hostId_idx_05205577\" does not exist",
+        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
+        "params": ["\"public\".\"session_logs_hostId_idx_05205577\""],
+        "expectation": {
+          "expects": "absent",
+          "object": "index \"session_logs_hostId_idx_05205577\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "create index \"session_logs_hostId_idx_05205577\"",
+        "sql": "CREATE INDEX \"session_logs_hostId_idx_05205577\" ON \"public\".\"session_logs\" (\"hostId\")",
+        "params": []
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify index \"session_logs_hostId_idx_05205577\" exists on \"session_logs\" with the planned definition",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_class\" AS \"c\" INNER JOIN \"pg_index\" AS \"i\" ON \"i\".\"indexrelid\" = \"c\".\"oid\" INNER JOIN \"pg_am\" AS \"m\" ON \"m\".\"oid\" = \"c\".\"relam\" WHERE (\"c\".\"oid\" = to_regclass($1) AND (\"c\".\"relkind\" = $2 OR \"c\".\"relkind\" = $3) AND \"i\".\"indrelid\" = to_regclass($4) AND NOT (\"i\".\"indisunique\") AND \"m\".\"amname\" = $5 AND (\"i\".\"indexprs\" IS NULL AND (SELECT coalesce(jsonb_agg(key_attribute.attname ORDER BY key_column.position), '[]'::jsonb) FROM unnest(\"i\".\"indkey\"::int2[]) WITH ORDINALITY AS key_column(attnum, position) JOIN pg_attribute key_attribute ON key_attribute.attrelid = \"i\".\"indrelid\" AND key_attribute.attnum = key_column.attnum) = ($6)::jsonb) AND \"i\".\"indpred\" IS NULL)) AS \"result\"",
+        "params": [
+          "\"public\".\"session_logs_hostId_idx_05205577\"",
+          "i",
+          "I",
+          "\"public\".\"session_logs\"",
+          "btree",
+          "[\"hostId\"]"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "index.session_logs.session_logs_viewerId_idx_11cd1fa3",
+    "label": "Create index \"session_logs_viewerId_idx_11cd1fa3\" on \"session_logs\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "index",
+        "name": "session_logs_viewerId_idx_11cd1fa3",
+        "table": "session_logs"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure index \"session_logs_viewerId_idx_11cd1fa3\" does not exist",
+        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
+        "params": ["\"public\".\"session_logs_viewerId_idx_11cd1fa3\""],
+        "expectation": {
+          "expects": "absent",
+          "object": "index \"session_logs_viewerId_idx_11cd1fa3\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "create index \"session_logs_viewerId_idx_11cd1fa3\"",
+        "sql": "CREATE INDEX \"session_logs_viewerId_idx_11cd1fa3\" ON \"public\".\"session_logs\" (\"viewerId\")",
+        "params": []
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify index \"session_logs_viewerId_idx_11cd1fa3\" exists on \"session_logs\" with the planned definition",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_class\" AS \"c\" INNER JOIN \"pg_index\" AS \"i\" ON \"i\".\"indexrelid\" = \"c\".\"oid\" INNER JOIN \"pg_am\" AS \"m\" ON \"m\".\"oid\" = \"c\".\"relam\" WHERE (\"c\".\"oid\" = to_regclass($1) AND (\"c\".\"relkind\" = $2 OR \"c\".\"relkind\" = $3) AND \"i\".\"indrelid\" = to_regclass($4) AND NOT (\"i\".\"indisunique\") AND \"m\".\"amname\" = $5 AND (\"i\".\"indexprs\" IS NULL AND (SELECT coalesce(jsonb_agg(key_attribute.attname ORDER BY key_column.position), '[]'::jsonb) FROM unnest(\"i\".\"indkey\"::int2[]) WITH ORDINALITY AS key_column(attnum, position) JOIN pg_attribute key_attribute ON key_attribute.attrelid = \"i\".\"indrelid\" AND key_attribute.attnum = key_column.attnum) = ($6)::jsonb) AND \"i\".\"indpred\" IS NULL)) AS \"result\"",
+        "params": [
+          "\"public\".\"session_logs_viewerId_idx_11cd1fa3\"",
+          "i",
+          "I",
+          "\"public\".\"session_logs\"",
+          "btree",
+          "[\"viewerId\"]"
+        ]
+      }
+    ]
+  }
+]

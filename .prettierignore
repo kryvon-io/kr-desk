@@ -4,3 +4,6 @@ dist/
 LICENSE
 apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/icons/
+apps/server/src/db/contract.json
+apps/server/src/db/contract.d.ts
+apps/server/migrations/

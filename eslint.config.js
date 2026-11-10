@@ -6,7 +6,14 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["**/dist/**", "**/target/**", "**/node_modules/**", "apps/desktop/src-tauri/**"],
+    ignores: [
+      "**/dist/**",
+      "**/target/**",
+      "**/node_modules/**",
+      "apps/desktop/src-tauri/**",
+      "apps/server/src/db/contract.d.ts",
+      "apps/server/migrations/**",
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -24,7 +31,7 @@ export default tseslint.config(
     rules: { "react-refresh/only-export-components": "off" },
   },
   {
-    files: ["apps/server/**/*.ts", "*.js", "apps/*/*.config.ts"],
+    files: ["apps/server/**/*.{ts,mjs}", "*.js", "apps/*/*.config.ts"],
     languageOptions: { globals: globals.node },
   },
 );

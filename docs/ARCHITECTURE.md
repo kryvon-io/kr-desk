@@ -1,6 +1,6 @@
 # KR Desk — Validação de stack, arquitetura e plano de etapas
 
-> Status (10/11/2026): Etapa 0 concluída · Etapa 1 em andamento. Repositório público `kryvon-io/kr-desk` (AGPL-3.0).
+> Status (10/11/2026): Etapa 0 concluída · Etapa 1 pronta no PR #1 (CI verde, teste ponta a ponta na Vercel ok). Repositório público `kryvon-io/kr-desk` (AGPL-3.0).
 
 ---
 
@@ -20,7 +20,7 @@
 | Fastify                  | 5.x                                                                                | Estável                                    | Exige Node 20+. Validar Node 26 no CI.                                                                                                                                           |
 | WebSocket                | `@fastify/websocket` (ws)                                                          | Estável                                    |                                                                                                                                                                                  |
 | **Prisma**               | **8** (`prisma` CLI 8.0.0-rc.33 / `@prisma/orm-postgres` 8.0.0-rc.23)              | ⚠️ Ainda RC                                | ✅ D3. Exige Node 22.18+ ou 24.11+ (Node 26 ok) e TS 5.9+. API nova (`db.orm.public.Model...`), sem `@prisma/client`. Fixar versão exata e aplicar a "upgrade recipe" a cada RC. |
-| PostgreSQL               | Neon                                                                               | Estável                                    | Usar o endpoint `-pooler`.                                                                                                                                                       |
+| PostgreSQL               | Neon                                                                               | Estável                                    | Conexão direta (o pooler recusa parâmetros enviados pelo Prisma 8).                                                                                                              |
 | Hospedagem do backend    | **Vercel Functions** (Fluid compute) com WebSocket nativo                          | GA em 20/10/2026                           | ✅ D4. Conexões caem ao atingir a duração máxima da função (padrão: 5 min). Isso exige reconexão automática e estado compartilhado (ver 2.7).                                    |
 | Estado compartilhado     | Redis serverless (Upstash via Vercel Marketplace, plano grátis)                    | Estável                                    | Presença + pub/sub entre instâncias da Vercel.                                                                                                                                   |
 | TURN/STUN                | **Cloudflare Realtime TURN** (substitui o coturn no MVP)                           | Estável                                    | 1.000 GB/mês grátis, depois US$ 0,05/GB. A Vercel não roda coturn (precisa de UDP e IP fixo). O coturn ≥ 4.18 numa VPS fica como opção futura.                                   |
@@ -151,8 +151,8 @@ Princípio: tudo que é específico de Windows fica em crates `*-win` atrás de 
 - **Ambiente remoto do Claude Code (Linux):** frontend, backend, crates multiplataforma, testes unitários, `cargo check` dos crates comuns.
 - **CI (`ci.yml`, a cada PR):** lint + testes em Linux; build e testes dos crates `*-win` em `windows-latest`; artefato de instalador de teste anexado ao PR.
 - **Release (`release-windows.yml`, por tag `v*`):** `tauri-action` → NSIS → assinatura → GitHub Release (rascunho) + manifesto do updater.
-- **Deploy do servidor:** integração Git da Vercel (preview por PR, produção na `main`) para `apps/server`; migrações Prisma rodam num job do Actions antes do deploy de produção.
-- **Segredos:** na Vercel: `DATABASE_URL`, `REDIS_URL`, `CF_TURN_KEY_ID`, `CF_TURN_API_TOKEN`. No GitHub: `DATABASE_URL` (migrações), chave privada do updater e, depois, o token do SignPath.
+- **Deploy do servidor:** integração Git da Vercel (preview por PR, produção na `main`) para `apps/server`; migrações Prisma rodam no build de produção (`scripts/vercel-build.mjs`, só na `main`).
+- **Segredos:** na Vercel: `DATABASE_URL`, `REDIS_URL`, `CF_TURN_KEY_ID`, `CF_TURN_API_TOKEN`. No GitHub: chave privada do updater e, depois, o token do SignPath.
 - **Limite inevitável:** os testes ponta a ponta reais exigem dois PCs Windows. Cada etapa terá um checklist curto para você executar.
 
 ---
@@ -180,15 +180,15 @@ MVP utilizável = Etapas 0–6. Etapas 7–9 levam a nível de produto.
 
 ## 4. Decisões
 
-| ID  | Decisão                | Resultado                                                                                                                                               |
-| --- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | Renderização no viewer | ✅ **A** — WebRTC nativo do WebView2 + `<video>`                                                                                                        |
-| D2  | Versão da webrtc-rs    | ✅ **0.21.1** (estável)                                                                                                                                 |
-| D3  | Prisma                 | ✅ **8** (RC; versão fixada, upgrade controlado)                                                                                                        |
-| D4  | Hospedagem             | ✅ **Vercel** (backend) + **Cloudflare Realtime TURN** (relay) + Upstash Redis — tudo nos planos grátis no MVP                                          |
-| D5  | Assinatura             | ✅ **Sem assinatura no MVP**; SignPath Foundation (grátis) antes de distribuir                                                                          |
-| D6  | Repositório            | ⏳ **Pendente:** público ou privado? (CI no GitHub Actions confirmado). Público + licença OSI viabiliza SignPath grátis e minutos de Actions ilimitados |
-| D7  | Nome                   | ✅ **KR Desk**, `com.krdesk.app`                                                                                                                        |
+| ID  | Decisão                | Resultado                                                                                                      |
+| --- | ---------------------- | -------------------------------------------------------------------------------------------------------------- |
+| D1  | Renderização no viewer | ✅ **A** — WebRTC nativo do WebView2 + `<video>`                                                               |
+| D2  | Versão da webrtc-rs    | ✅ **0.21.1** (estável)                                                                                        |
+| D3  | Prisma                 | ✅ **8** (RC; versão fixada, upgrade controlado)                                                               |
+| D4  | Hospedagem             | ✅ **Vercel** (backend) + **Cloudflare Realtime TURN** (relay) + Upstash Redis — tudo nos planos grátis no MVP |
+| D5  | Assinatura             | ✅ **Sem assinatura no MVP**; SignPath Foundation (grátis) antes de distribuir                                 |
+| D6  | Repositório            | ✅ **Público**, AGPL-3.0, `kryvon-io/kr-desk`                                                                  |
+| D7  | Nome                   | ✅ **KR Desk**, `com.krdesk.app`                                                                               |
 
 ### Infraestrutura provisionada (Etapa 1)
 

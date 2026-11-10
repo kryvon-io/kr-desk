@@ -55,7 +55,12 @@ fn start_video(host: &HostPeer) -> VideoStream {
     };
     VideoStream::start(
         host.video(),
-        Box::new(|| Ok(Box::new(TestPattern::new(640, 360, 30)) as Box<dyn FrameSource>)),
+        Box::new(|| {
+            Ok(
+                Box::new(TestPattern::with_monitors(&[(640, 360), (320, 240)], 30))
+                    as Box<dyn FrameSource>,
+            )
+        }),
         factory,
         config,
         Some(host.control_sender()),
@@ -78,6 +83,7 @@ async fn main() {
         let mut rtt: Option<Duration> = None;
         let mut route: Option<kr_transport::Route> = None;
         let mut keyframe_requests = 0u32;
+        let mut monitor_selected: Option<u32> = None;
         let mut input = InputController::new(Recorder::default());
         let mut video: Option<VideoStream> = None;
 
@@ -88,6 +94,9 @@ async fn main() {
                         let (Some(rtt), Some(route)) = (rtt, route.as_ref()) else {
                             break Err("viewer terminou antes do host medir RTT/rota".to_string());
                         };
+                        if monitor_selected != Some(1) {
+                            break Err("viewer não trocou de monitor".to_string());
+                        }
                         let rec = input.sink();
                         if rec.moves == 0 || rec.buttons < 2 || rec.keys < 2 || rec.wheels == 0 {
                             break Err(format!(
@@ -131,6 +140,12 @@ async fn main() {
                     }
                     PeerEvent::Rtt(d) => rtt = Some(d),
                     PeerEvent::Route(r) => route = Some(r),
+                    PeerEvent::SelectMonitor(index) => {
+                        monitor_selected = Some(index);
+                        if let Some(v) = &video {
+                            v.select_monitor(index);
+                        }
+                    }
                     PeerEvent::Input(msg) => {
                         input.handle(&msg);
                     }

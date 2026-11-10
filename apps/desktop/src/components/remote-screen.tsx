@@ -1,5 +1,6 @@
 import {
   Activity,
+  Monitor,
   Loader2,
   Maximize,
   Minimize,
@@ -19,6 +20,7 @@ import {
   type VideoMetrics,
   type VideoSample,
 } from "@/lib/video-stats";
+import type { MonitorInfo } from "@/lib/control";
 import type { ViewerPeer } from "@/lib/viewer-peer";
 import { useRemoteInput } from "@/lib/use-remote-input";
 
@@ -58,6 +60,7 @@ export function RemoteScreen({
   peer,
   stream,
   cursor,
+  monitors,
   tauri,
   onEnd,
 }: {
@@ -66,6 +69,8 @@ export function RemoteScreen({
   stream: MediaStream | null;
   /** Cursor do host (valor CSS). */
   cursor: string;
+  /** Monitores do host e o transmitido. */
+  monitors: { list: MonitorInfo[]; active: number } | null;
   /** Rodando dentro do app (hook de teclado disponível). */
   tauri: boolean;
   onEnd: (requestId: string) => void;
@@ -188,6 +193,36 @@ export function RemoteScreen({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {monitors && monitors.list.length > 1 && (
+            <div
+              className="mr-2 flex items-center gap-1"
+              role="group"
+              aria-label="Telas do computador remoto"
+            >
+              {monitors.list.map((m, i) => {
+                const active = m.index === monitors.active;
+                return (
+                  <Button
+                    key={m.index}
+                    variant="ghost"
+                    size="sm"
+                    className={cn(
+                      "gap-1.5 text-white hover:bg-white/15 hover:text-white",
+                      active && "bg-white/20",
+                    )}
+                    aria-pressed={active}
+                    title={`${m.primary ? "Tela principal" : `Tela ${i + 1}`} · ${m.width}×${m.height}`}
+                    onClick={() => {
+                      if (!active) peer?.selectMonitor(m.index);
+                    }}
+                  >
+                    <Monitor className="size-3.5" />
+                    {i + 1}
+                  </Button>
+                );
+              })}
+            </div>
+          )}
           <Button
             variant="ghost"
             size="icon"

@@ -9,6 +9,7 @@ import {
   type ConnectionStatus,
   type ServerMessage,
 } from "@/lib/signaling-state";
+import type { MonitorInfo } from "@/lib/control";
 import { cursorCss, rgbaToDataUrl } from "@/lib/pointer";
 import {
   ViewerPeer,
@@ -53,6 +54,11 @@ export function useSignaling() {
   const [remote, setRemote] = useState<{ peer: ViewerPeer; stream: MediaStream } | null>(null);
   /** Cursor do host como valor CSS (desenhado localmente, sem atraso). */
   const [remoteCursor, setRemoteCursor] = useState("default");
+  /** Monitores do host (viewer). */
+  const [remoteMonitors, setRemoteMonitors] = useState<{
+    list: MonitorInfo[];
+    active: number;
+  } | null>(null);
   const cursorShape = useRef("default");
   const cursorVisible = useRef(true);
 
@@ -64,6 +70,7 @@ export function useSignaling() {
       cursorShape.current = "default";
       cursorVisible.current = true;
       setRemoteCursor("default");
+      setRemoteMonitors(null);
     }
   }, []);
 
@@ -83,6 +90,9 @@ export function useSignaling() {
         onRoute: (route) => update({ route }),
         onVideo: (stream) => {
           if (viewer.current?.peer === peer) setRemote({ peer, stream });
+        },
+        onMonitors: (list, active) => {
+          if (viewer.current?.peer === peer) setRemoteMonitors({ list, active });
         },
         onCursor: (msg) => {
           if (msg.t === "cursor_shape") {
@@ -191,6 +201,7 @@ export function useSignaling() {
     state,
     remote,
     remoteCursor,
+    remoteMonitors,
     deviceName,
     tauri,
     connectTo,

@@ -12,5 +12,14 @@
   { "t": "key", "code": 75, "ext": true, "down": false },
   { "t": "release_all" },
   { "t": "cursor_shape", "w": 1, "h": 1, "hx": 0, "hy": 0, "rgba": "AAAA/w==" },
-  { "t": "cursor_visible", "visible": false }
+  { "t": "cursor_visible", "visible": false },
+  {
+    "t": "monitors",
+    "list": [
+      { "index": 0, "name": "\\\\.\\DISPLAY1", "width": 1920, "height": 1080, "primary": true },
+      { "index": 1, "name": "\\\\.\\DISPLAY2", "width": 2560, "height": 1440, "primary": false }
+    ],
+    "active": 0
+  },
+  { "t": "select_monitor", "index": 2 }
 ]

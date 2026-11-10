@@ -8,12 +8,12 @@ use base64::Engine;
 use bytes::Bytes;
 use kr_core::media::{
     CursorUpdate, EncodedFrame, EncoderFactory, PipelineConfig, PipelineControl, PipelineError,
-    PipelineStats, SourceFactory, run_pipeline,
+    PipelineStats, SharedArea, SourceEvent, SourceFactory, run_pipeline,
 };
 use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
 
-use kr_proto::control::{ControlMessage, CursorImage};
+use kr_proto::control::{ControlMessage, CursorImage, MonitorDto};
 
 use crate::{ControlSender, VideoSender};
 
@@ -36,6 +36,30 @@ fn cursor_message(update: CursorUpdate) -> ControlMessage {
     }
 }
 
+/// Traduz um evento da captura; atualiza a área ativa ao trocar de monitor.
+fn event_message(event: SourceEvent, area: &SharedArea) -> ControlMessage {
+    match event {
+        SourceEvent::Cursor(update) => cursor_message(update),
+        SourceEvent::Monitors { list, active } => {
+            let rect = list.iter().find(|m| m.index == active).map(|m| m.rect);
+            *area.lock().expect("mutex") = rect;
+            ControlMessage::Monitors {
+                list: list
+                    .into_iter()
+                    .map(|m| MonitorDto {
+                        index: m.index,
+                        name: m.name,
+                        width: m.rect.width,
+                        height: m.rect.height,
+                        primary: m.primary,
+                    })
+                    .collect(),
+                active,
+            }
+        }
+    }
+}
+
 /// Quadros aguardando envio. Pouco, de propósito: atraso acumulado é pior
 /// que um quadro descartado.
 const QUEUE: usize = 3;
@@ -45,29 +69,33 @@ const QUEUE: usize = 3;
 pub struct VideoStream {
     control: Arc<PipelineControl>,
     thread: Option<JoinHandle<Result<PipelineStats, PipelineError>>>,
+    area: SharedArea,
 }
 
 impl VideoStream {
     /// Inicia captura e codificação numa thread própria (onde `source` e
     /// `encoder` são criados) e o envio numa task do runtime tokio atual.
-    /// Mudanças do cursor vão para `cursor`, se informado.
+    /// Cursor e lista de monitores vão para `control_channel`, se informado.
     pub fn start(
         video: VideoSender,
         source: SourceFactory,
         encoder: EncoderFactory,
         config: PipelineConfig,
-        cursor: Option<ControlSender>,
+        control_channel: Option<ControlSender>,
     ) -> std::io::Result<Self> {
         let control = PipelineControl::new();
+        let area = SharedArea::default();
         let (tx, mut rx) = mpsc::channel::<EncodedFrame>(QUEUE);
-        let (cursor_tx, mut cursor_rx) = mpsc::unbounded_channel::<CursorUpdate>();
-        if let Some(sender) = cursor {
-            tokio::spawn(async move {
-                while let Some(update) = cursor_rx.recv().await {
-                    sender.send(&cursor_message(update)).await;
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel::<SourceEvent>();
+        let event_area = area.clone();
+        tokio::spawn(async move {
+            while let Some(event) = event_rx.recv().await {
+                let msg = event_message(event, &event_area);
+                if let Some(sender) = &control_channel {
+                    sender.send(&msg).await;
                 }
-            });
-        }
+            }
+        });
 
         let writer_control = control.clone();
         tokio::spawn(async move {
@@ -110,8 +138,8 @@ impl VideoStream {
                         }
                         Err(mpsc::error::TrySendError::Closed(_)) => false,
                     },
-                    |update| {
-                        let _ = cursor_tx.send(update);
+                    |event| {
+                        let _ = event_tx.send(event);
                     },
                 );
                 if let Err(err) = &result {
@@ -123,11 +151,22 @@ impl VideoStream {
         Ok(Self {
             control,
             thread: Some(thread),
+            area,
         })
     }
 
     pub fn request_keyframe(&self) {
         self.control.request_keyframe();
+    }
+
+    /// Passa a transmitir outro monitor.
+    pub fn select_monitor(&self, index: u32) {
+        self.control.request_monitor(index);
+    }
+
+    /// Área da tela transmitida (para mirar a entrada remota).
+    pub fn area(&self) -> SharedArea {
+        self.area.clone()
     }
 
     /// O pipeline terminou (erro de captura/codificação ou envio)?

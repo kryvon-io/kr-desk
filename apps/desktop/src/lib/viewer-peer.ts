@@ -14,6 +14,7 @@ import {
   type CandidateType,
   type ControlMessage,
   type InputMessage,
+  type MonitorInfo,
 } from "./control";
 
 /** Formato de `payload` de `signal` (igual a `kr_transport::SignalPayload`). */
@@ -47,6 +48,8 @@ export interface ViewerPeerEvents {
   onVideo?: (stream: MediaStream) => void;
   /** O host mudou a forma ou a visibilidade do cursor. */
   onCursor?: (msg: Extract<ControlMessage, { t: "cursor_shape" | "cursor_visible" }>) => void;
+  /** Monitores do host e qual está sendo transmitido. */
+  onMonitors?: (list: MonitorInfo[], active: number) => void;
 }
 
 const PING_INTERVAL_MS = 1000;
@@ -130,6 +133,13 @@ export class ViewerPeer {
     if (this.control.readyState === "open") this.control.send(JSON.stringify({ t: "keyframe" }));
   }
 
+  /** Pede ao host para transmitir outro monitor. */
+  selectMonitor(index: number) {
+    if (this.control.readyState === "open") {
+      this.control.send(JSON.stringify({ t: "select_monitor", index }));
+    }
+  }
+
   /** Envia entrada ao host. Movimentos vão pelo canal não confiável. */
   sendInput(msg: InputMessage): boolean {
     const channel =
@@ -157,6 +167,8 @@ export class ViewerPeer {
       this.inFlight = null;
     } else if (msg.t === "cursor_shape" || msg.t === "cursor_visible") {
       this.events.onCursor?.(msg);
+    } else if (msg.t === "monitors") {
+      this.events.onMonitors?.(msg.list, msg.active);
     }
   }
 

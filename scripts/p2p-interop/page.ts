@@ -13,6 +13,8 @@ interface InteropResult {
   resolution?: string;
   decoder?: string;
   cursor?: string;
+  monitors?: number;
+  switchedTo?: string;
   error?: string;
 }
 
@@ -44,6 +46,7 @@ ws.onopen = () => {
     onCursor: (msg) => {
       if (msg.t === "cursor_shape") result.cursor = `${msg.w}x${msg.h}`;
     },
+    onMonitors: (list) => (result.monitors = list.length),
     onVideo: (stream) => {
       video.srcObject = stream;
       void video.play().catch(() => undefined);
@@ -56,19 +59,25 @@ ws.onopen = () => {
   };
   peer.start().catch((err: unknown) => (result.error = String(err)));
 
+  let switchRequested: number | null = null;
   const timer = setInterval(() => {
     void sampleVideo(peer.pc).then((s) => {
       if (!s) return;
       result.framesDecoded = s.framesDecoded;
       if (s.frameWidth) result.resolution = `${s.frameWidth}x${s.frameHeight}`;
       result.decoder = s.decoderImplementation;
-      if (
-        !result.ok &&
+      const ready =
         result.rttMs !== undefined &&
         result.route !== undefined &&
         s.framesDecoded >= MIN_FRAMES &&
-        result.cursor !== undefined
-      ) {
+        result.cursor !== undefined &&
+        result.monitors === 2;
+      if (ready && switchRequested === null) {
+        // Troca para o segundo monitor (320×240) e espera a nova resolução.
+        switchRequested = s.framesDecoded;
+        peer.selectMonitor(1);
+      } else if (switchRequested !== null && result.resolution === "320x240" && !result.ok) {
+        result.switchedTo = result.resolution;
         result.ok = true;
         clearInterval(timer);
         sendInputAndFinish(peer);

@@ -26,6 +26,16 @@ pub enum MouseButton {
     X2,
 }
 
+/// Monitor do host disponível para transmissão.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MonitorDto {
+    pub index: u32,
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub primary: bool,
+}
+
 /// Imagem do cursor do host (RGBA 8 bits, sem pré-multiplicação).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CursorImage {
@@ -104,6 +114,15 @@ pub enum ControlMessage {
     /// Host → viewer: cursor visível ou oculto (ex.: vídeo em tela cheia).
     CursorVisible {
         visible: bool,
+    },
+    /// Host → viewer: monitores disponíveis e o que está sendo transmitido.
+    Monitors {
+        list: Vec<MonitorDto>,
+        active: u32,
+    },
+    /// Viewer → host: transmitir outro monitor.
+    SelectMonitor {
+        index: u32,
     },
 }
 

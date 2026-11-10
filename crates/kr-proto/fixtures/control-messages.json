@@ -21,5 +21,7 @@
     ],
     "active": 0
   },
-  { "t": "select_monitor", "index": 2 }
+  { "t": "select_monitor", "index": 2 },
+  { "t": "auth", "pk": "cGs", "sig": "c2ln" },
+  { "t": "permissions", "control": false }
 ]

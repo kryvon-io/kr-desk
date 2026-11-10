@@ -13,7 +13,9 @@ export type ControlMessage =
   | { t: "keyframe" }
   | { t: "cursor_shape"; w: number; h: number; hx: number; hy: number; rgba: string }
   | { t: "cursor_visible"; visible: boolean }
-  | { t: "monitors"; list: MonitorInfo[]; active: number };
+  | { t: "monitors"; list: MonitorInfo[]; active: number }
+  | { t: "auth"; pk: string; sig: string }
+  | { t: "permissions"; control: boolean };
 
 /** Monitor do host disponível para transmissão. */
 export interface MonitorInfo {
@@ -84,6 +86,12 @@ export function parseControl(raw: string): ControlMessage | null {
     typeof o.active === "number"
   ) {
     return { t: "monitors", list: o.list, active: o.active };
+  }
+  if (o.t === "auth" && typeof o.pk === "string" && typeof o.sig === "string") {
+    return { t: "auth", pk: o.pk, sig: o.sig };
+  }
+  if (o.t === "permissions" && typeof o.control === "boolean") {
+    return { t: "permissions", control: o.control };
   }
   if (o.t === "cursor_visible" && typeof o.visible === "boolean") {
     return { t: "cursor_visible", visible: o.visible };

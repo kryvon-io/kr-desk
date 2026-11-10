@@ -1,8 +1,40 @@
-import { Cast, Loader2, MonitorUp, Power, Router, TriangleAlert, Zap } from "lucide-react";
+import {
+  Cast,
+  Eye,
+  Loader2,
+  MonitorUp,
+  MousePointer2,
+  Power,
+  Router,
+  ShieldCheck,
+  TriangleAlert,
+  Zap,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { formatId, type ActiveSession, type P2pStatus } from "@/lib/signaling-state";
+import { formatCode } from "@/lib/session-auth";
 import { cn } from "@/lib/utils";
+
+/** Código de verificação e se a identidade do outro lado foi confirmada. */
+export function VerificationLine({ p2p }: { p2p: P2pStatus }) {
+  if (!p2p.verificationCode) return null;
+  return (
+    <span
+      className="flex flex-wrap items-center gap-x-1.5 text-muted-foreground"
+      title="O mesmo código deve aparecer na outra tela. Se for diferente, encerre a sessão."
+    >
+      <ShieldCheck
+        className={cn("size-3.5", p2p.authenticated ? "text-emerald-500" : "text-muted-foreground")}
+      />
+      Código de verificação{" "}
+      <span className="font-mono font-medium text-foreground">
+        {formatCode(p2p.verificationCode)}
+      </span>
+      {p2p.firstContact && <span>· primeira conexão: confira na outra tela</span>}
+    </span>
+  );
+}
 
 /** Descrição curta da conexão ponto a ponto. */
 function P2pLine({ p2p }: { p2p: P2pStatus }) {
@@ -51,9 +83,12 @@ function P2pLine({ p2p }: { p2p: P2pStatus }) {
 export function SessionBanner({
   session,
   onEnd,
+  onToggleControl,
 }: {
   session: ActiveSession;
   onEnd: (requestId: string) => void;
+  /** Host: liga/desliga o controle remoto. */
+  onToggleControl?: (requestId: string, allow: boolean) => void;
 }) {
   const peer = <span className="whitespace-nowrap font-mono">{formatId(session.peerId)}</span>;
   const text =
@@ -81,15 +116,38 @@ export function SessionBanner({
         <span className="pl-6 text-xs" aria-live="polite">
           <P2pLine p2p={session.p2p} />
         </span>
+        <span className="pl-6 text-xs">
+          <VerificationLine p2p={session.p2p} />
+        </span>
         {session.role === "host" && session.p2p.sharing && (
           <span className="flex items-center gap-1.5 pl-6 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-            <Cast className="size-3.5" /> Sua tela está sendo transmitida e pode ser controlada
+            <Cast className="size-3.5" />
+            {session.p2p.control
+              ? "Sua tela está sendo transmitida e pode ser controlada"
+              : "Sua tela está sendo transmitida (somente visualização)"}
           </span>
         )}
       </div>
-      <Button variant="outline" size="sm" onClick={() => onEnd(session.requestId)}>
-        <Power /> Encerrar
-      </Button>
+      <div className="flex shrink-0 flex-col items-stretch gap-1.5">
+        {session.role === "host" && onToggleControl && session.p2p.authenticated && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onToggleControl(session.requestId, !session.p2p.control)}
+            title={
+              session.p2p.control
+                ? "Bloquear mouse e teclado remotos"
+                : "Permitir mouse e teclado remotos"
+            }
+          >
+            {session.p2p.control ? <Eye /> : <MousePointer2 />}
+            {session.p2p.control ? "Só visualizar" : "Permitir controle"}
+          </Button>
+        )}
+        <Button variant="outline" size="sm" onClick={() => onEnd(session.requestId)}>
+          <Power /> Encerrar
+        </Button>
+      </div>
     </div>
   );
 }

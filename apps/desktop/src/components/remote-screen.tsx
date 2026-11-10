@@ -1,5 +1,6 @@
 import {
   Activity,
+  Eye,
   Monitor,
   Loader2,
   Maximize,
@@ -11,6 +12,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { VerificationLine } from "@/components/session-banner";
 import { Button } from "@/components/ui/button";
 import { formatId, type ActiveSession } from "@/lib/signaling-state";
 import { cn } from "@/lib/utils";
@@ -83,7 +85,10 @@ export function RemoteScreen({
   const [details, setDetails] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const metrics = useVideoMetrics(peer);
-  useRemoteInput(video, peer, playing, tauri);
+  // Sem identidade confirmada ou sem permissão, nada de mouse/teclado (e o
+  // hook não segura as teclas locais).
+  const canControl = session.p2p.authenticated && session.p2p.control;
+  useRemoteInput(video, peer, playing && canControl, tauri);
 
   useEffect(() => {
     const el = video.current;
@@ -151,9 +156,11 @@ export function RemoteScreen({
           ) : (
             <>
               <Loader2 className="size-8 animate-spin" />
-              {p2p.state === "connected"
-                ? "Aguardando a imagem da tela remota…"
-                : "Estabelecendo conexão direta…"}
+              {p2p.state !== "connected"
+                ? "Estabelecendo conexão direta…"
+                : p2p.authenticated
+                  ? "Aguardando a imagem da tela remota…"
+                  : "Verificando a identidade do outro computador…"}
             </>
           )}
         </div>
@@ -182,6 +189,14 @@ export function RemoteScreen({
               <Activity className="size-3.5" />
               {metrics.fps} fps · {formatRate(metrics.kbps)}
               {metrics.width && ` · ${metrics.width}×${metrics.height}`}
+            </span>
+          )}
+          <span className="whitespace-nowrap [&_*]:!text-white/80">
+            <VerificationLine p2p={p2p} />
+          </span>
+          {p2p.authenticated && !p2p.control && (
+            <span className="flex items-center gap-1.5 whitespace-nowrap rounded bg-amber-500/20 px-1.5 py-0.5 text-amber-200">
+              <Eye className="size-3.5" /> Somente visualização
             </span>
           )}
           {details && metrics && (

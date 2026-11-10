@@ -1,0 +1,12 @@
+{
+  "request_id": "7f9c2b1e-4d3a-4c5b-9e8f-0a1b2c3d4e5f",
+  "host_sdp": "v=0\r\no=- 1 2 IN IP4 0.0.0.0\r\na=fingerprint:sha-256 0A:1B:2C:3D:4E:5F:60:71:82:93:A4:B5:C6:D7:E8:F9:0A:1B:2C:3D:4E:5F:60:71:82:93:A4:B5:C6:D7:E8:F9\r\na=setup:active\r\n",
+  "viewer_sdp": "v=0\r\no=- 3 4 IN IP4 127.0.0.1\r\na=fingerprint:sha-256 f0:e1:d2:c3:b4:a5:96:87:78:69:5a:4b:3c:2d:1e:0f:f0:e1:d2:c3:b4:a5:96:87:78:69:5a:4b:3c:2d:1e:0f\r\na=setup:actpass\r\n",
+  "host_fp": "sha-256 0A:1B:2C:3D:4E:5F:60:71:82:93:A4:B5:C6:D7:E8:F9:0A:1B:2C:3D:4E:5F:60:71:82:93:A4:B5:C6:D7:E8:F9",
+  "viewer_fp": "sha-256 F0:E1:D2:C3:B4:A5:96:87:78:69:5A:4B:3C:2D:1E:0F:F0:E1:D2:C3:B4:A5:96:87:78:69:5A:4B:3C:2D:1E:0F",
+  "host_message": "kr-desk/session/v1\n7f9c2b1e-4d3a-4c5b-9e8f-0a1b2c3d4e5f\nhost\nsha-256 0A:1B:2C:3D:4E:5F:60:71:82:93:A4:B5:C6:D7:E8:F9:0A:1B:2C:3D:4E:5F:60:71:82:93:A4:B5:C6:D7:E8:F9\nsha-256 F0:E1:D2:C3:B4:A5:96:87:78:69:5A:4B:3C:2D:1E:0F:F0:E1:D2:C3:B4:A5:96:87:78:69:5A:4B:3C:2D:1E:0F",
+  "viewer_message": "kr-desk/session/v1\n7f9c2b1e-4d3a-4c5b-9e8f-0a1b2c3d4e5f\nviewer\nsha-256 F0:E1:D2:C3:B4:A5:96:87:78:69:5A:4B:3C:2D:1E:0F:F0:E1:D2:C3:B4:A5:96:87:78:69:5A:4B:3C:2D:1E:0F\nsha-256 0A:1B:2C:3D:4E:5F:60:71:82:93:A4:B5:C6:D7:E8:F9:0A:1B:2C:3D:4E:5F:60:71:82:93:A4:B5:C6:D7:E8:F9",
+  "sas": "826257",
+  "host_public_key": "ebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ",
+  "host_signature": "QEDgjLr7oARofsYeP5aJ1EREcMmtdFYDQKuRJ9Aq3GQIojSwkafuV1C1-x2VSwD3IGGiXTuC_vurLaVNi6RVCw"
+}

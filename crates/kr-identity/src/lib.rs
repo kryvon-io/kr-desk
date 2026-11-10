@@ -3,6 +3,12 @@
 //! (DPAPI no Windows, com escopo do usuário). O ID público de 9 dígitos é
 //! atribuído pelo servidor e fica vinculado à chave pública.
 
+mod session;
+
+pub use session::{
+    KnownPeers, SessionAuthError, Trust, verification_code, verify_peer, verify_session_message,
+};
+
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};

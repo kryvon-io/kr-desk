@@ -27,11 +27,12 @@ function findChrome() {
   return found;
 }
 
-function startHost() {
+function startHost(tamper) {
   return new Promise((resolve, reject) => {
     const proc = spawn("cargo", ["run", "-q", "-p", "kr-transport", "--example", "interop_host"], {
       cwd: root,
       stdio: ["ignore", "pipe", "inherit"],
+      env: { ...process.env, KR_INTEROP_TAMPER: tamper ? "1" : "0" },
     });
     let buffer = "";
     const lines = [];
@@ -64,34 +65,49 @@ const server = createServer((_, res) =>
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const pagePort = server.address().port;
 
-const { proc, port, lines } = await startHost();
-const hostDone = new Promise((r) => proc.on("exit", (code) => r(code)));
-
 const browser = await chromium.launch({ executablePath: findChrome(), headless: true });
-const page = await browser.newPage();
-page.on("console", (m) => console.log(`[chrome] ${m.text()}`));
-await page.goto(`http://127.0.0.1:${pagePort}/?ws=ws://127.0.0.1:${port}`);
 
-let viewer;
-try {
-  await page.waitForFunction(() => window.__interop.ok || window.__interop.error, null, {
-    timeout: 30_000,
-  });
-  viewer = await page.evaluate(() => window.__interop);
-} catch {
-  viewer = await page.evaluate(() => window.__interop);
+/** Executa um cenário e devolve o resultado do host e do viewer. */
+async function scenario(tamper) {
+  const { proc, port, lines } = await startHost(tamper);
+  const hostDone = new Promise((r) => proc.on("exit", (code) => r(code)));
+  const page = await browser.newPage();
+  page.on("console", (m) => console.log(`[chrome] ${m.text()}`));
+  await page.goto(`http://127.0.0.1:${pagePort}/?ws=ws://127.0.0.1:${port}`);
+  let viewer;
+  try {
+    await page.waitForFunction(() => window.__interop.ok || window.__interop.error, null, {
+      timeout: 30_000,
+    });
+  } finally {
+    viewer = await page.evaluate(() => window.__interop).catch(() => undefined);
+  }
+  // No cenário normal, o host termina sozinho depois do "done" da página.
+  if (tamper) proc.kill();
+  const hostCode = await hostDone;
+  await page.close();
+  return { hostCode, viewer, hostLine: lines.find((l) => l.startsWith("INTEROP_")) };
 }
-const hostCode = await hostDone;
+
+const normal = await scenario(false);
+console.log("host  :", normal.hostLine ?? "(sem resultado)");
+console.log("viewer:", JSON.stringify(normal.viewer));
+// Intermediário simulado: o host assina um fingerprint que não é o dele.
+const mitm = await scenario(true);
+console.log("MITM  :", JSON.stringify(mitm.viewer));
 await browser.close();
 server.close();
 
-const hostLine = lines.find((l) => l.startsWith("INTEROP_"));
-console.log("host  :", hostLine ?? "(sem resultado)");
-console.log("viewer:", JSON.stringify(viewer));
-if (hostCode !== 0 || !viewer?.ok) {
+let failed = false;
+if (normal.hostCode !== 0 || !normal.viewer?.ok) {
   console.error("FALHOU: interoperabilidade WebRTC Rust × Chrome");
-  process.exit(1);
+  failed = true;
 }
+if (mitm.viewer?.ok || !String(mitm.viewer?.error ?? "").startsWith("auth:")) {
+  console.error("FALHOU: o viewer aceitou um host com fingerprint adulterado");
+  failed = true;
+}
+if (failed) process.exit(1);
 console.log(
-  "OK: Rust (webrtc-rs) e Chrome conectaram ponto a ponto, mediram a latência, o Chrome decodificou o vídeo H.264 e a entrada (mouse/teclado) e o cursor chegaram.",
+  "OK: Rust (webrtc-rs) e Chrome se autenticaram, conectaram ponto a ponto, mediram a latência, o Chrome decodificou o vídeo H.264, entrada e cursor chegaram — e o fingerprint adulterado foi recusado.",
 );

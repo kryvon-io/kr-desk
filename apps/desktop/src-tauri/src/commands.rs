@@ -67,10 +67,16 @@ pub fn connect_to(target_id: String, bridge: State<'_, Bridge>) -> Result<String
 pub fn respond_request(
     request_id: String,
     accept: bool,
+    allow_control: Option<bool>,
     bridge: State<'_, Bridge>,
 ) -> Result<(), String> {
     if !is_request_id(&request_id) {
         return Err("Pedido inválido.".into());
+    }
+    if accept {
+        bridge
+            .p2p
+            .set_pending_control(&request_id, allow_control.unwrap_or(true));
     }
     bridge
         .handle
@@ -134,4 +140,92 @@ pub fn set_keyboard_capture(enabled: bool, app: tauri::AppHandle) -> bool {
     use tauri::Manager;
     app.try_state::<crate::remote_input::KeyboardCapture>()
         .is_some_and(|c| c.set_enabled(enabled))
+}
+
+/// Chaves usadas na autenticação da sessão (viewer e host).
+pub struct Session {
+    pub identity: std::sync::Arc<kr_identity::DeviceIdentity>,
+    pub known: std::sync::Arc<std::sync::Mutex<kr_identity::KnownPeers>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionProof {
+    pub public_key: String,
+    pub signature: String,
+}
+
+/// Viewer: assina a mensagem de sessão montada pela interface. Só aceita
+/// mensagens com o contexto de sessão (a chave não assina outras coisas).
+#[tauri::command]
+pub fn sign_session(message: String, session: State<'_, Session>) -> Result<SessionProof, String> {
+    let signature = session
+        .identity
+        .sign_session_message(&message)
+        .map_err(|e| e.to_string())?;
+    Ok(SessionProof {
+        public_key: session.identity.public_key_b64(),
+        signature,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", tag = "result")]
+pub enum VerifyResult {
+    /// Identidade confirmada; `firstContact` = chave memorizada agora.
+    Ok {
+        first_contact: bool,
+    },
+    /// A chave mudou desde a última conexão com este computador.
+    Changed,
+    Failed {
+        reason: String,
+    },
+}
+
+/// Viewer: verifica a prova do host e aplica TOFU pelo ID dele.
+#[tauri::command]
+pub fn verify_session(
+    peer_id: String,
+    expected_public_key: String,
+    public_key: String,
+    signature: String,
+    message: String,
+    session: State<'_, Session>,
+) -> VerifyResult {
+    if public_key != expected_public_key {
+        return VerifyResult::Failed {
+            reason: "a chave do outro computador não confere com a do servidor".into(),
+        };
+    }
+    if let Err(err) = kr_identity::verify_session_message(&public_key, &signature, &message) {
+        return VerifyResult::Failed {
+            reason: format!("verificação falhou: {err}"),
+        };
+    }
+    match session
+        .known
+        .lock()
+        .expect("mutex")
+        .check(&peer_id, &public_key)
+    {
+        kr_identity::Trust::Changed => VerifyResult::Changed,
+        trust => VerifyResult::Ok {
+            first_contact: trust == kr_identity::Trust::New,
+        },
+    }
+}
+
+/// Esquece a chave memorizada de um computador (o usuário confirmou que ele
+/// foi reinstalado).
+#[tauri::command]
+pub fn forget_peer(peer_id: String, session: State<'_, Session>) {
+    session.known.lock().expect("mutex").forget(&peer_id);
+    tracing::info!(%peer_id, "chave memorizada removida");
+}
+
+/// Host: permite ou bloqueia o controle remoto durante a sessão.
+#[tauri::command]
+pub fn set_session_control(request_id: String, allow: bool, bridge: State<'_, Bridge>) -> bool {
+    bridge.p2p.set_control(&request_id, allow)
 }

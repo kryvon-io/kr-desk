@@ -148,7 +148,32 @@ describe("estado P2P", () => {
       { type: "p2p_status", requestId: RID, route },
       { type: "p2p_status", requestId: "outra", state: "failed" },
     );
-    expect(s.active?.p2p).toEqual({ state: "connected", rttMs: 12, route, sharing: false });
+    expect(s.active?.p2p).toMatchObject({ state: "connected", rttMs: 12, route, sharing: false });
+  });
+
+  it("guarda verificação, autenticação e permissão", () => {
+    const s = run(online, ready, {
+      type: "p2p_status",
+      requestId: RID,
+      verificationCode: "123456",
+      authenticated: true,
+      firstContact: true,
+      control: false,
+    });
+    expect(s.active?.p2p).toMatchObject({
+      verificationCode: "123456",
+      authenticated: true,
+      firstContact: true,
+      control: false,
+    });
+  });
+
+  it("alerta de segurança fica até ser dispensado", () => {
+    const alert = { peerId: "123456789", reason: "x", keyChanged: true };
+    let s = reducer(initialState, { type: "security_failed", alert });
+    expect(s.securityAlert).toEqual(alert);
+    s = reducer(s, { type: "security_dismissed" });
+    expect(s.securityAlert).toBeNull();
   });
 
   it("marca quando a tela do host está sendo transmitida", () => {

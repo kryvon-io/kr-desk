@@ -10,7 +10,7 @@ mod tray;
 
 use std::sync::Arc;
 
-use kr_identity::{DeviceIdentity, SystemProtector};
+use kr_identity::{DeviceIdentity, KnownPeers, SystemProtector};
 use tauri::{Manager, WindowEvent};
 
 /// Rótulo da janela principal (definido implicitamente pelo tauri.conf.json).
@@ -39,7 +39,13 @@ pub fn run() {
             let identity = Arc::new(DeviceIdentity::load_or_create(&data_dir, &SystemProtector)?);
             tracing::info!(public_key = %identity.public_key_b64(), "identidade carregada");
 
-            let bridge = signaling::start(app.handle().clone(), identity);
+            // Chaves dos computadores já conectados (TOFU), usadas nos dois papéis.
+            let known = Arc::new(std::sync::Mutex::new(KnownPeers::load(&data_dir)));
+            app.manage(commands::Session {
+                identity: identity.clone(),
+                known: known.clone(),
+            });
+            let bridge = signaling::start(app.handle().clone(), identity, known);
             app.manage(bridge);
             tray::create(app.handle())?;
             app.manage(remote_input::KeyboardCapture::install(app.handle()));
@@ -62,6 +68,10 @@ pub fn run() {
             commands::end_session,
             commands::send_signal,
             commands::set_keyboard_capture,
+            commands::sign_session,
+            commands::verify_session,
+            commands::forget_peer,
+            commands::set_session_control,
         ])
         .run(tauri::generate_context!())
         .expect("falha ao iniciar o KR Desk");

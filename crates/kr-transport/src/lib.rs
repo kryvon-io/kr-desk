@@ -119,6 +119,16 @@ pub enum PeerEvent {
     KeyframeRequest,
     /// O viewer pediu para transmitir outro monitor.
     SelectMonitor(u32),
+    /// Fingerprints DTLS negociados (o nosso e o do viewer, como vemos no SDP).
+    Fingerprints {
+        local: String,
+        remote: String,
+    },
+    /// Prova de identidade enviada pelo viewer (ver `kr_proto::session`).
+    PeerAuth {
+        pk: String,
+        sig: String,
+    },
     /// Entrada remota (mouse/teclado) do viewer. Ao fechar o canal de
     /// controle, chega um `ReleaseAll`.
     Input(ControlMessage),
@@ -192,6 +202,10 @@ struct Shared {
     ping_seq: AtomicU64,
     /// Ping em voo: (número, quando foi enviado).
     in_flight: std::sync::Mutex<Option<(u64, Instant)>>,
+    /// Candidatos gerados antes de a resposta SDP sair. O viewer precisa da
+    /// resposta antes dos candidatos, então eles esperam aqui. `None` = a
+    /// resposta já foi enviada.
+    early_candidates: std::sync::Mutex<Option<Vec<CandidateInit>>>,
 }
 
 impl Shared {
@@ -208,11 +222,17 @@ struct Handler {
 impl PeerConnectionEventHandler for Handler {
     async fn on_ice_candidate(&self, event: RTCPeerConnectionIceEvent) {
         match event.candidate.to_json() {
-            Ok(init) => self
-                .shared
-                .emit(PeerEvent::Signal(SignalPayload::Candidate {
-                    candidate: init.into(),
-                })),
+            Ok(init) => {
+                let mut early = self.shared.early_candidates.lock().expect("mutex");
+                match early.as_mut() {
+                    Some(queue) => queue.push(init.into()),
+                    None => self
+                        .shared
+                        .emit(PeerEvent::Signal(SignalPayload::Candidate {
+                            candidate: init.into(),
+                        })),
+                }
+            }
             Err(err) => warn!(%err, "candidato local inválido"),
         }
     }
@@ -316,6 +336,9 @@ async fn control_loop(dc: Arc<dyn DataChannel>, shared: Arc<Shared>) {
                     Ok(ControlMessage::SelectMonitor { index }) => {
                         shared.emit(PeerEvent::SelectMonitor(index));
                     }
+                    Ok(ControlMessage::Auth { pk, sig }) => {
+                        shared.emit(PeerEvent::PeerAuth { pk, sig });
+                    }
                     Ok(msg) if is_input(&msg) => shared.emit(PeerEvent::Input(msg)),
                     Ok(other) => debug!(?other, "mensagem de controle ignorada"),
                     Err(err) => debug!(%err, "mensagem de controle desconhecida"),
@@ -363,6 +386,7 @@ impl HostPeer {
             control: ControlSender::default(),
             ping_seq: AtomicU64::new(1),
             in_flight: std::sync::Mutex::new(None),
+            early_candidates: std::sync::Mutex::new(Some(Vec::new())),
         });
 
         // Só H.264: o viewer recebe vídeo e o resto vai por DataChannel.
@@ -424,13 +448,27 @@ impl HostPeer {
             .map_err(|e| TransportError::BadSignal(e.to_string()))?;
         match signal {
             SignalPayload::Offer { sdp } => {
+                let remote_fp = kr_proto::session::sdp_fingerprint(&sdp);
                 let offer = RTCSessionDescription::offer(sdp)?;
                 self.pc.set_remote_description(offer).await?;
                 self.has_remote.store(true, Ordering::SeqCst);
                 let answer = self.pc.create_answer(None).await?;
                 self.pc.set_local_description(answer.clone()).await?;
+                let local_fp = kr_proto::session::sdp_fingerprint(&answer.sdp);
                 self.shared
                     .emit(PeerEvent::Signal(SignalPayload::Answer { sdp: answer.sdp }));
+                // Agora os candidatos que chegaram antes podem seguir.
+                let early = self.shared.early_candidates.lock().expect("mutex").take();
+                for candidate in early.into_iter().flatten() {
+                    self.shared
+                        .emit(PeerEvent::Signal(SignalPayload::Candidate { candidate }));
+                }
+                match (local_fp, remote_fp) {
+                    (Some(local), Some(remote)) => {
+                        self.shared.emit(PeerEvent::Fingerprints { local, remote });
+                    }
+                    _ => warn!("SDP sem fingerprint DTLS; a sessão não poderá ser autenticada"),
+                }
                 for c in std::mem::take(&mut *self.pending.lock().await) {
                     self.pc.add_ice_candidate(c.into()).await?;
                 }

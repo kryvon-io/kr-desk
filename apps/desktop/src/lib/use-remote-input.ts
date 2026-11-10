@@ -18,7 +18,9 @@ interface HookKey {
  * - Mouse: eventos do `<video>`, com coordenadas normalizadas sobre a área
  *   da imagem; movimentos agrupados por quadro de animação.
  * - Teclado: no app (Windows), o hook nativo captura tudo — inclusive Win e
- *   Alt+Tab — e chega pelo evento `viewer-key`. Sem o hook, usa `keydown`.
+ *   Alt+Tab — e chega pelo evento `viewer-key`. Tecla que o hook consome não
+ *   chega ao `keydown`; a que ele deixa passar (ou sem hook) é tratada aqui.
+ *   Assim nunca há duplicidade e o teclado funciona mesmo sem o hook.
  * - Ao perder o foco ou sair, manda `release_all` (nada fica pressionado).
  */
 export function useRemoteInput(
@@ -31,7 +33,6 @@ export function useRemoteInput(
     const el = video.current;
     if (!el || !peer || !active) return;
     let disposed = false;
-    let hookActive = false;
     let unlisten: (() => void) | null = null;
     let raf = 0;
     let pendingMove: { x: number; y: number } | null = null;
@@ -58,8 +59,11 @@ export function useRemoteInput(
       if (!button || !p) return;
       e.preventDefault();
       const down = e.type === "pointerdown";
-      if (down) el.setPointerCapture(e.pointerId);
-      else if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+      if (down) {
+        // Garante que o WebView tenha o foco do teclado.
+        el.focus({ preventScroll: true });
+        el.setPointerCapture(e.pointerId);
+      } else if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
       // O movimento pendente vai antes do clique.
       if (raf) cancelAnimationFrame(raf);
       pendingMove = null;
@@ -76,7 +80,6 @@ export function useRemoteInput(
     const sendKey = (code: number, ext: boolean, down: boolean) =>
       peer.sendInput({ t: "key", code, ext, down });
     const onKey = (e: KeyboardEvent) => {
-      if (hookActive) return;
       const sc = scancodeFor(e.code);
       if (!sc) return;
       e.preventDefault();
@@ -95,11 +98,7 @@ export function useRemoteInput(
     window.addEventListener("blur", releaseAll);
 
     if (tauri) {
-      invoke<boolean>("set_keyboard_capture", { enabled: true })
-        .then((v) => {
-          if (!disposed) hookActive = v;
-        })
-        .catch(() => undefined);
+      invoke<boolean>("set_keyboard_capture", { enabled: true }).catch(() => undefined);
       listen<HookKey>("viewer-key", (e) => sendKey(e.payload.code, e.payload.ext, e.payload.down))
         .then((u) => {
           if (disposed) u();

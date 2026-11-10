@@ -60,44 +60,34 @@ pub struct KeyboardCapture {
 
 impl KeyboardCapture {
     #[cfg(windows)]
-    pub fn install(app: &AppHandle, window: &tauri::WebviewWindow) -> Self {
-        let hook = match window.hwnd() {
-            Ok(hwnd) => {
-                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<KeyDto>();
-                let app = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    while let Some(key) = rx.recv().await {
-                        let _ = app.emit(EVENT_VIEWER_KEY, key);
-                    }
-                });
-                // O hook precisa responder rápido: só repassa para a task.
-                kr_input_win::KeyboardHook::install(
-                    windows::Win32::Foundation::HWND(hwnd.0),
-                    move |k| {
-                        let _ = tx.send(KeyDto {
-                            code: k.code,
-                            ext: k.ext,
-                            down: k.down,
-                        });
-                    },
-                )
+    pub fn install(app: &AppHandle) -> Self {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<KeyDto>();
+        let emitter = app.clone();
+        tauri::async_runtime::spawn(async move {
+            while let Some(key) = rx.recv().await {
+                if let Err(err) = emitter.emit(EVENT_VIEWER_KEY, key) {
+                    tracing::warn!(%err, "não foi possível repassar a tecla à interface");
+                }
             }
-            Err(err) => {
-                tracing::warn!(%err, "janela sem HWND; teclado capturado só pela interface");
-                None
-            }
-        };
+        });
+        // O hook precisa responder rápido: só repassa para a task.
+        let hook = kr_input_win::KeyboardHook::install(move |k| {
+            let _ = tx.send(KeyDto {
+                code: k.code,
+                ext: k.ext,
+                down: k.down,
+            });
+        });
         Self { hook }
     }
 
     #[cfg(not(windows))]
-    pub fn install(_app: &AppHandle, _window: &tauri::WebviewWindow) -> Self {
+    pub fn install(_app: &AppHandle) -> Self {
         let _ = EVENT_VIEWER_KEY;
         Self {}
     }
 
-    /// Liga/desliga a captura. Devolve `true` se o hook nativo está ativo
-    /// (então a interface não deve tratar o teclado por conta própria).
+    /// Liga/desliga a captura. Devolve `true` se o hook nativo está ativo.
     pub fn set_enabled(&self, enabled: bool) -> bool {
         #[cfg(windows)]
         if let Some(hook) = &self.hook {

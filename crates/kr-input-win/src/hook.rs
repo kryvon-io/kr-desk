@@ -1,17 +1,17 @@
 //! Hook de teclado de baixo nível para o viewer.
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread::JoinHandle;
 
 use tracing::{info, warn};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetForegroundWindow, GetMessageW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_EXTENDED,
-    LLKHF_INJECTED, MSG, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
-    WH_KEYBOARD_LL, WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
+    CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, HC_ACTION,
+    KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED, MSG, PostThreadMessageW, SetWindowsHookExW,
+    UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
 };
 
 /// Tecla capturada pelo hook.
@@ -27,16 +27,31 @@ type Callback = Box<dyn Fn(HookKey) + Send + Sync>;
 /// Estado global: o procedimento do hook não recebe contexto.
 static CALLBACK: Mutex<Option<Callback>> = Mutex::new(None);
 static ENABLED: AtomicBool = AtomicBool::new(false);
-static TARGET: AtomicIsize = AtomicIsize::new(0);
+/// Processo dono da janela da sessão (o próprio app).
+static TARGET_PID: AtomicU32 = AtomicU32::new(0);
+static FIRST_KEY_LOGGED: AtomicBool = AtomicBool::new(false);
+
+/// A janela em primeiro plano pertence a este processo? Comparar o processo
+/// (e não o HWND) cobre as janelas filhas do WebView2.
+fn foreground_is_ours() -> bool {
+    // SAFETY: consultas simples; `pid` é um destino válido.
+    unsafe {
+        let foreground = GetForegroundWindow();
+        if foreground.0.is_null() {
+            return false;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(foreground, Some(&mut pid));
+        pid != 0 && pid == TARGET_PID.load(Ordering::Relaxed)
+    }
+}
 
 unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 && ENABLED.load(Ordering::Relaxed) {
         // SAFETY: para WH_KEYBOARD_LL, lparam aponta para um KBDLLHOOKSTRUCT.
         let kb = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
         let injected = kb.flags.0 & LLKHF_INJECTED.0 != 0;
-        // SAFETY: consulta simples.
-        let foreground = unsafe { GetForegroundWindow() }.0 as isize;
-        if !injected && foreground != 0 && foreground == TARGET.load(Ordering::Relaxed) {
+        if !injected && foreground_is_ours() {
             let message = wparam.0 as u32;
             let key = HookKey {
                 code: kb.scanCode as u16,
@@ -46,6 +61,13 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             if let Ok(guard) = CALLBACK.lock()
                 && let Some(callback) = guard.as_ref()
             {
+                if !FIRST_KEY_LOGGED.swap(true, Ordering::Relaxed) {
+                    info!(
+                        code = key.code,
+                        ext = key.ext,
+                        "primeira tecla capturada pelo hook"
+                    );
+                }
                 callback(key);
                 // Consome a tecla: ela vai para o computador remoto.
                 return LRESULT(1);
@@ -64,14 +86,11 @@ pub struct KeyboardHook {
 
 impl KeyboardHook {
     /// Instala o hook numa thread própria (com loop de mensagens). As teclas
-    /// só são capturadas com [`KeyboardHook::set_enabled`] ligado e a janela
-    /// `target` em primeiro plano.
-    pub fn install(
-        target: HWND,
-        callback: impl Fn(HookKey) + Send + Sync + 'static,
-    ) -> Option<Self> {
+    /// só são capturadas com [`KeyboardHook::set_enabled`] ligado e uma janela
+    /// deste processo em primeiro plano.
+    pub fn install(callback: impl Fn(HookKey) + Send + Sync + 'static) -> Option<Self> {
         *CALLBACK.lock().ok()? = Some(Box::new(callback));
-        TARGET.store(target.0 as isize, Ordering::Relaxed);
+        TARGET_PID.store(std::process::id(), Ordering::Relaxed);
         let (tx, rx) = std::sync::mpsc::channel();
         let thread = std::thread::Builder::new()
             .name("kr-keyboard-hook".into())
@@ -106,6 +125,7 @@ impl KeyboardHook {
     /// Liga/desliga a captura (ex.: só com a tela remota aberta).
     pub fn set_enabled(&self, enabled: bool) {
         ENABLED.store(enabled, Ordering::Relaxed);
+        info!(enabled, "captura de teclado");
     }
 }
 

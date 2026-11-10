@@ -124,7 +124,8 @@ export function RemoteScreen({
     >
       <video
         ref={video}
-        className={cn("size-full object-contain", !playing && "invisible")}
+        tabIndex={-1}
+        className={cn("size-full object-contain outline-none", !playing && "invisible")}
         style={{ cursor: playing ? cursor : "default" }}
         muted
         playsInline

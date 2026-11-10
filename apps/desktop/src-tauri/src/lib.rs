@@ -42,12 +42,7 @@ pub fn run() {
             let bridge = signaling::start(app.handle().clone(), identity);
             app.manage(bridge);
             tray::create(app.handle())?;
-            if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-                app.manage(remote_input::KeyboardCapture::install(
-                    app.handle(),
-                    &window,
-                ));
-            }
+            app.manage(remote_input::KeyboardCapture::install(app.handle()));
             Ok(())
         })
         .on_window_event(|window, event| {

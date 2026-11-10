@@ -1,6 +1,6 @@
 use kr_core::input::InputSink;
 use kr_proto::control::{MouseButton, NormCoord};
-use tracing::warn;
+use tracing::{info, warn};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT,
     KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MOUSE_EVENT_FLAGS,
@@ -47,6 +47,7 @@ fn metric(index: windows::Win32::UI::WindowsAndMessaging::SYSTEM_METRICS_INDEX) 
 #[derive(Debug, Default)]
 pub struct SendInputSink {
     failures: u32,
+    keys: u32,
 }
 
 impl SendInputSink {
@@ -130,6 +131,10 @@ impl InputSink for SendInputSink {
     }
 
     fn key(&mut self, code: u16, ext: bool, down: bool) {
+        self.keys += 1;
+        if self.keys == 1 {
+            info!(code, ext, down, "primeira tecla remota recebida");
+        }
         let mut flags: KEYBD_EVENT_FLAGS = KEYEVENTF_SCANCODE;
         if ext {
             flags |= KEYEVENTF_EXTENDEDKEY;

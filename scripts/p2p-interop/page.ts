@@ -1,4 +1,6 @@
 // Página de teste: o mesmo `ViewerPeer` do app, rodando num Chrome comum.
+// Sucesso = latência medida, rota informada e quadros H.264 decodificados.
+import { sampleVideo } from "../../apps/desktop/src/lib/video-stats";
 import { ViewerPeer, type SignalPayload } from "../../apps/desktop/src/lib/viewer-peer";
 
 interface InteropResult {
@@ -6,6 +8,9 @@ interface InteropResult {
   state?: string;
   rttMs?: number;
   route?: string;
+  framesDecoded?: number;
+  resolution?: string;
+  decoder?: string;
   error?: string;
 }
 
@@ -15,24 +20,54 @@ declare global {
   }
 }
 
-window.__interop = { ok: false };
+/** Quadros decodificados exigidos para considerar o vídeo funcionando. */
+const MIN_FRAMES = 15;
+
+const result: InteropResult = { ok: false };
+window.__interop = result;
 const ws = new WebSocket(new URLSearchParams(location.search).get("ws") ?? "");
 
 ws.onopen = () => {
+  const video = document.createElement("video");
+  video.muted = true;
+  video.autoplay = true;
+  video.playsInline = true;
+  document.body.append(video);
+
   const peer = new ViewerPeer([], {
     onSignal: (p) => ws.send(JSON.stringify(p)),
-    onState: (s) => (window.__interop.state = s),
-    onRtt: (ms) => {
-      window.__interop.rttMs = ms;
-      window.__interop.ok = window.__interop.route !== undefined;
+    onState: (s) => (result.state = s),
+    onRtt: (ms) => (result.rttMs = ms),
+    onRoute: (r) => (result.route = `${r.local}/${r.remote}/${r.protocol}`),
+    onVideo: (stream) => {
+      video.srcObject = stream;
+      void video.play().catch(() => undefined);
     },
-    onRoute: (r) => (window.__interop.route = `${r.local}/${r.remote}/${r.protocol}`),
   });
   ws.onmessage = (e) => {
     peer.handleSignal(JSON.parse(String(e.data)) as SignalPayload).catch((err: unknown) => {
-      window.__interop.error = String(err);
+      result.error = String(err);
     });
   };
-  peer.start().catch((err: unknown) => (window.__interop.error = String(err)));
+  peer.start().catch((err: unknown) => (result.error = String(err)));
+
+  const timer = setInterval(() => {
+    void sampleVideo(peer.pc).then((s) => {
+      if (!s) return;
+      result.framesDecoded = s.framesDecoded;
+      if (s.frameWidth) result.resolution = `${s.frameWidth}x${s.frameHeight}`;
+      result.decoder = s.decoderImplementation;
+      if (
+        !result.ok &&
+        result.rttMs !== undefined &&
+        result.route !== undefined &&
+        s.framesDecoded >= MIN_FRAMES
+      ) {
+        result.ok = true;
+        clearInterval(timer);
+        ws.send("done");
+      }
+    });
+  }, 250);
 };
-ws.onerror = () => (window.__interop.error = "falha no WebSocket");
+ws.onerror = () => (result.error = "falha no WebSocket");

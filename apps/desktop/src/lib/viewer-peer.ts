@@ -1,8 +1,9 @@
 /**
  * Lado **viewer** da conexão P2P, com o WebRTC nativo do WebView2 (Chromium).
  *
- * Cria a oferta e o DataChannel `control`; troca SDP/candidatos com o host
- * (webrtc-rs) pela sinalização. Independe de React e de Tauri para poder ser
+ * Cria a oferta, o DataChannel `control` e um transceiver de vídeo só de
+ * recebimento (H.264); troca SDP/candidatos com o host (webrtc-rs) pela
+ * sinalização. Independe de React e de Tauri para poder ser
  * testado num Chrome comum (`scripts/p2p-interop`).
  */
 import { CONTROL_LABEL, isCandidateType, parseControl, type CandidateType } from "./control";
@@ -34,6 +35,8 @@ export interface ViewerPeerEvents {
   onRtt?: (ms: number) => void;
   onRoute?: (route: RouteInfo) => void;
   onControlOpen?: () => void;
+  /** Vídeo da tela do host chegou. */
+  onVideo?: (stream: MediaStream) => void;
 }
 
 const PING_INTERVAL_MS = 1000;
@@ -41,6 +44,7 @@ const PING_INTERVAL_MS = 1000;
 export class ViewerPeer {
   readonly pc: RTCPeerConnection;
   private readonly control: RTCDataChannel;
+  readonly video: RTCRtpTransceiver;
   private readonly timers: ReturnType<typeof setInterval>[] = [];
   private seq = 1;
   private inFlight: { n: number; at: number } | null = null;
@@ -59,6 +63,15 @@ export class ViewerPeer {
       ...(options.forceRelay ? { iceTransportPolicy: "relay" as const } : {}),
     });
     this.control = this.pc.createDataChannel(CONTROL_LABEL, { ordered: true });
+    this.video = this.pc.addTransceiver("video", { direction: "recvonly" });
+    preferH264(this.video);
+    // Latência acima de suavidade: o mínimo de buffer que o decodificador aceitar.
+    (this.video.receiver as RTCRtpReceiver & { jitterBufferTarget?: number }).jitterBufferTarget =
+      0;
+    this.pc.ontrack = (e) => {
+      if (e.track.kind === "video")
+        this.events.onVideo?.(e.streams[0] ?? new MediaStream([e.track]));
+    };
 
     this.pc.onicecandidate = (e) => {
       if (e.candidate) this.events.onSignal({ kind: "candidate", candidate: e.candidate.toJSON() });
@@ -97,6 +110,11 @@ export class ViewerPeer {
       if (this.pc.remoteDescription) await this.pc.addIceCandidate(payload.candidate);
       else this.pendingCandidates.push(payload.candidate);
     }
+  }
+
+  /** Pede um keyframe ao host (ex.: quando o `<video>` é montado de novo). */
+  requestKeyframe() {
+    if (this.control.readyState === "open") this.control.send(JSON.stringify({ t: "keyframe" }));
   }
 
   private ping() {
@@ -149,6 +167,24 @@ export class ViewerPeer {
     this.stopTimers();
     this.control.close();
     this.pc.close();
+  }
+}
+
+/** Coloca H.264 constrained baseline (`42e01f`) no topo da oferta. */
+function preferH264(transceiver: RTCRtpTransceiver) {
+  const codecs = RTCRtpReceiver.getCapabilities("video")?.codecs ?? [];
+  const score = (c: RTCRtpCodecCapability) => {
+    if (c.mimeType.toLowerCase() !== "video/h264") return 2;
+    const fmtp = c.sdpFmtpLine ?? "";
+    return fmtp.includes("profile-level-id=42e01f") && fmtp.includes("packetization-mode=1")
+      ? 0
+      : 1;
+  };
+  if (!codecs.some((c) => score(c) === 0)) return; // sem H.264: deixa o padrão
+  try {
+    transceiver.setCodecPreferences([...codecs].sort((a, b) => score(a) - score(b)));
+  } catch {
+    // Navegadores antigos: segue sem preferência.
   }
 }
 

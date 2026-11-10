@@ -1,0 +1,16 @@
+[package]
+name = "kr-codec-soft"
+description = "Encoder H.264 de software (OpenH264) usado só em testes e no CI Linux"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+kr-core.workspace = true
+openh264.workspace = true
+
+[lints]
+workspace = true

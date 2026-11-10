@@ -69,6 +69,7 @@ impl P2pManager {
         // A task guarda só a trilha de vídeo (não o peer), para não criar um
         // ciclo que manteria o canal de eventos aberto depois do fim da sessão.
         let video_sender = peer.video();
+        let control_sender = peer.control_sender();
         if let Some(old) = self.peers.lock().await.insert(request_id.clone(), peer) {
             old.close().await;
         }
@@ -84,6 +85,8 @@ impl P2pManager {
             };
             emit(&app, status.clone());
             let mut video: Option<VideoStream> = None;
+            // Criado ao abrir o canal; solta teclas/botões ao ser descartado.
+            let mut input = None;
             let mut check = tokio::time::interval(VIDEO_CHECK);
             loop {
                 let ev = tokio::select! {
@@ -117,7 +120,11 @@ impl P2pManager {
                     PeerEvent::ControlOpen => {
                         status.state = PeerState::Connected;
                         if video.is_none() {
-                            match crate::screen::start(video_sender.clone()) {
+                            if input.is_none() {
+                                input = Some(crate::remote_input::host_controller());
+                            }
+                            match crate::screen::start(video_sender.clone(), control_sender.clone())
+                            {
                                 Ok(stream) => {
                                     info!(%request_id, "transmissão da tela iniciada");
                                     video = Some(stream);
@@ -129,6 +136,12 @@ impl P2pManager {
                     }
                     PeerEvent::Rtt(d) => status.rtt_ms = Some(d.as_millis() as u64),
                     PeerEvent::Route(r) => status.route = Some(r),
+                    PeerEvent::Input(msg) => {
+                        if let Some(c) = input.as_mut() {
+                            c.handle(&msg);
+                        }
+                        continue;
+                    }
                     PeerEvent::KeyframeRequest => {
                         if let Some(v) = &video {
                             v.request_keyframe();
@@ -138,6 +151,7 @@ impl P2pManager {
                 }
                 if matches!(status.state, PeerState::Closed | PeerState::Failed) {
                     video = None;
+                    input = None;
                     status.sharing = false;
                 }
                 emit(&app, status.clone());

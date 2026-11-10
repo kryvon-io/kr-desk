@@ -3,6 +3,7 @@
 mod commands;
 mod logging;
 mod p2p;
+mod remote_input;
 mod screen;
 mod signaling;
 mod tray;
@@ -41,6 +42,12 @@ pub fn run() {
             let bridge = signaling::start(app.handle().clone(), identity);
             app.manage(bridge);
             tray::create(app.handle())?;
+            if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+                app.manage(remote_input::KeyboardCapture::install(
+                    app.handle(),
+                    &window,
+                ));
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -59,6 +66,7 @@ pub fn run() {
             commands::respond_request,
             commands::end_session,
             commands::send_signal,
+            commands::set_keyboard_capture,
         ])
         .run(tauri::generate_context!())
         .expect("falha ao iniciar o KR Desk");

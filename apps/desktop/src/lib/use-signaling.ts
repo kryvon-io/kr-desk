@@ -9,6 +9,7 @@ import {
   type ConnectionStatus,
   type ServerMessage,
 } from "@/lib/signaling-state";
+import { cursorCss, rgbaToDataUrl } from "@/lib/pointer";
 import {
   ViewerPeer,
   type IceServerDto,
@@ -50,12 +51,19 @@ export function useSignaling() {
   const viewer = useRef<{ requestId: string; peer: ViewerPeer } | null>(null);
   /** Vídeo da tela remota (viewer) e a conexão que o recebe. */
   const [remote, setRemote] = useState<{ peer: ViewerPeer; stream: MediaStream } | null>(null);
+  /** Cursor do host como valor CSS (desenhado localmente, sem atraso). */
+  const [remoteCursor, setRemoteCursor] = useState("default");
+  const cursorShape = useRef("default");
+  const cursorVisible = useRef(true);
 
   const closeViewer = useCallback((requestId?: string) => {
     if (viewer.current && (!requestId || viewer.current.requestId === requestId)) {
       viewer.current.peer.close();
       viewer.current = null;
       setRemote(null);
+      cursorShape.current = "default";
+      cursorVisible.current = true;
+      setRemoteCursor("default");
     }
   }, []);
 
@@ -75,6 +83,14 @@ export function useSignaling() {
         onRoute: (route) => update({ route }),
         onVideo: (stream) => {
           if (viewer.current?.peer === peer) setRemote({ peer, stream });
+        },
+        onCursor: (msg) => {
+          if (msg.t === "cursor_shape") {
+            cursorShape.current = cursorCss(msg, rgbaToDataUrl) ?? "default";
+          } else {
+            cursorVisible.current = msg.visible;
+          }
+          setRemoteCursor(cursorVisible.current ? cursorShape.current : "none");
         },
       });
       viewer.current = { requestId, peer };
@@ -174,6 +190,7 @@ export function useSignaling() {
   return {
     state,
     remote,
+    remoteCursor,
     deviceName,
     tauri,
     connectTo,

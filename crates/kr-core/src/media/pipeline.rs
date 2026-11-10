@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use super::{
-    CaptureError, CursorUpdate, EncodeError, EncoderConfig, FrameSource, Nv12Frame, VideoEncoder, bgra_to_nv12,
-    fit_within, is_keyframe,
+    CaptureError, CursorUpdate, EncodeError, EncoderConfig, FrameSource, Nv12Frame, VideoEncoder,
+    bgra_to_nv12, fit_within, is_keyframe,
 };
 
 /// Abre a fonte de captura (chamada na thread do pipeline).

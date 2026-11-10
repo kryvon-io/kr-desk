@@ -1,6 +1,6 @@
 # KR Desk — Validação de stack, arquitetura e plano de etapas
 
-> Status (10/11/2026): Etapas 0–3 concluídas · Etapa 4 (captura e vídeo) em PR. Repositório público `kryvon-io/kr-desk` (AGPL-3.0).
+> Status (10/11/2026): Etapas 0–4 concluídas · Etapa 5 (controle remoto) em PR. Repositório público `kryvon-io/kr-desk` (AGPL-3.0).
 
 ---
 
@@ -127,6 +127,7 @@ Princípio: tudo que é específico de Windows fica em crates `*-win` atrás de 
 - Coordenadas normalizadas (0–65535) → `MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK` (multi-monitor).
 - Teclado por **scancode** (independente de layout, inclusive ABNT2), com tratamento de teclas estendidas.
 - Liberação de todas as teclas/botões pressionados ao perder foco ou encerrar a sessão (evita tecla "presa").
+- **Implementado na Etapa 5:** DataChannel `input` (sem ordem, `maxRetransmits: 0`) só para movimentos; cliques, roda e teclas no `control`, com a posição junto do clique. No host, `InputController` (`kr-core`) rastreia o que está pressionado e solta tudo ao fechar o canal; `SendInputSink` (`kr-input-win`) mapeia para o monitor principal na área de trabalho virtual. No viewer, hook `WH_KEYBOARD_LL` ativo só com a tela remota aberta e a janela em primeiro plano (scancode e flag estendida direto do Windows); fora do app, mapa `KeyboardEvent.code` → scancode. Cursor: a forma vem da DXGI (`GetFramePointerShape`) pelo canal de controle e vira o `cursor` CSS do `<video>` — sem atraso de vídeo.
 
 ### 2.6 Segurança
 

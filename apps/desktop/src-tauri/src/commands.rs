@@ -126,3 +126,12 @@ mod tests {
         assert!(normalize_id("12345678a").is_err());
     }
 }
+
+/// Liga/desliga a captura nativa do teclado (viewer com a tela remota
+/// aberta). Devolve `true` se o hook do Windows está cuidando do teclado.
+#[tauri::command]
+pub fn set_keyboard_capture(enabled: bool, app: tauri::AppHandle) -> bool {
+    use tauri::Manager;
+    app.try_state::<crate::remote_input::KeyboardCapture>()
+        .is_some_and(|c| c.set_enabled(enabled))
+}

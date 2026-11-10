@@ -74,7 +74,10 @@ pub enum ControlMessage {
     /// Viewer → host: pede um keyframe (ex.: o `<video>` acabou de montar).
     Keyframe,
     /// Viewer → host: move o ponteiro (canal `input`).
-    MouseMove { x: NormCoord, y: NormCoord },
+    MouseMove {
+        x: NormCoord,
+        y: NormCoord,
+    },
     /// Viewer → host: botão pressionado/solto na posição dada.
     MouseButton {
         button: MouseButton,
@@ -84,15 +87,24 @@ pub enum ControlMessage {
     },
     /// Viewer → host: roda do mouse em unidades do Windows (120 = um "clique";
     /// `dy > 0` rola para cima, `dx > 0` para a direita).
-    Wheel { dx: i32, dy: i32 },
+    Wheel {
+        dx: i32,
+        dy: i32,
+    },
     /// Viewer → host: tecla por scancode (conjunto 1) — independe do layout.
-    Key { code: u16, ext: bool, down: bool },
+    Key {
+        code: u16,
+        ext: bool,
+        down: bool,
+    },
     /// Viewer → host: solta todas as teclas e botões (perda de foco, fim).
     ReleaseAll,
     /// Host → viewer: nova forma do cursor.
     CursorShape(CursorImage),
     /// Host → viewer: cursor visível ou oculto (ex.: vídeo em tela cheia).
-    CursorVisible { visible: bool },
+    CursorVisible {
+        visible: bool,
+    },
 }
 
 impl ControlMessage {

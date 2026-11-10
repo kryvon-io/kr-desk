@@ -55,7 +55,10 @@ impl<S: InputSink> InputController<S> {
                 }
             }
             ControlMessage::Wheel { dx, dy } => {
-                let (dx, dy) = (dx.clamp(-MAX_WHEEL, MAX_WHEEL), dy.clamp(-MAX_WHEEL, MAX_WHEEL));
+                let (dx, dy) = (
+                    dx.clamp(-MAX_WHEEL, MAX_WHEEL),
+                    dy.clamp(-MAX_WHEEL, MAX_WHEEL),
+                );
                 if dx != 0 || dy != 0 {
                     self.sink.wheel(dx, dy);
                 }
@@ -124,7 +127,10 @@ mod tests {
             self.0.lock().unwrap().push(format!("wheel {dx},{dy}"));
         }
         fn key(&mut self, code: u16, ext: bool, down: bool) {
-            self.0.lock().unwrap().push(format!("key {code:#x} {ext} {down}"));
+            self.0
+                .lock()
+                .unwrap()
+                .push(format!("key {code:#x} {ext} {down}"));
         }
     }
 

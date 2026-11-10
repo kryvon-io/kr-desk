@@ -9,9 +9,10 @@
 //! exclusiva. Nesses casos devolvemos [`CaptureError::Transient`] e
 //! recriamos tudo na próxima chamada.
 
+use std::collections::VecDeque;
 use std::time::Duration;
 
-use kr_core::media::{BgraFrame, CaptureError, FrameSource};
+use kr_core::media::{BgraFrame, CaptureError, CursorUpdate, FrameSource};
 use tracing::{info, warn};
 use windows::Win32::Foundation::{E_ACCESSDENIED, HMODULE};
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_UNKNOWN;
@@ -24,8 +25,10 @@ use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SA
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, DXGI_ERROR_ACCESS_DENIED, DXGI_ERROR_ACCESS_LOST,
     DXGI_ERROR_NOT_CURRENTLY_AVAILABLE, DXGI_ERROR_NOT_FOUND, DXGI_ERROR_SESSION_DISCONNECTED,
-    DXGI_ERROR_UNSUPPORTED, DXGI_ERROR_WAIT_TIMEOUT, DXGI_OUTDUPL_FRAME_INFO, IDXGIAdapter1,
-    IDXGIFactory1, IDXGIOutput1, IDXGIOutputDuplication, IDXGIResource,
+    DXGI_ERROR_UNSUPPORTED, DXGI_ERROR_WAIT_TIMEOUT, DXGI_OUTDUPL_FRAME_INFO,
+    DXGI_OUTDUPL_POINTER_SHAPE_INFO, DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR,
+    DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR, DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME,
+    IDXGIAdapter1, IDXGIFactory1, IDXGIOutput1, IDXGIOutputDuplication, IDXGIResource,
 };
 use windows::core::{HRESULT, Interface};
 
@@ -174,11 +177,78 @@ impl Session {
     }
 }
 
+/// Converte a forma do ponteiro da DXGI para RGBA.
+///
+/// - Colorido: BGRA com alfa.
+/// - Monocromático: máscaras AND e XOR de 1 bit (altura dobrada). Pixels que
+///   invertem a tela viram pretos (não há "inverter" num cursor CSS).
+/// - Colorido com máscara: alfa 0xFF indica XOR com a tela; tratamos preto
+///   como transparente e as demais cores como opacas.
+pub(crate) fn pointer_to_rgba(
+    kind: u32,
+    width: u32,
+    height: u32,
+    pitch: u32,
+    buf: &[u8],
+) -> Option<(u32, u32, Vec<u8>)> {
+    let (w, pitch) = (width as usize, pitch as usize);
+    if kind == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME.0 as u32 {
+        let h = height as usize / 2;
+        let bit = |row: usize, x: usize| -> Option<bool> {
+            let byte = *buf.get(row * pitch + x / 8)?;
+            Some(byte & (0x80 >> (x % 8)) != 0)
+        };
+        let mut out = Vec::with_capacity(w * h * 4);
+        for y in 0..h {
+            for x in 0..w {
+                let and = bit(y, x)?;
+                let xor = bit(y + h, x)?;
+                out.extend_from_slice(&match (and, xor) {
+                    (true, false) => [0, 0, 0, 0],
+                    (false, false) => [0, 0, 0, 255],
+                    (false, true) => [255, 255, 255, 255],
+                    (true, true) => [0, 0, 0, 255],
+                });
+            }
+        }
+        return Some((width, h as u32, out));
+    }
+    let masked = kind == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR.0 as u32;
+    if !masked && kind != DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR.0 as u32 {
+        return None;
+    }
+    let h = height as usize;
+    let mut out = Vec::with_capacity(w * h * 4);
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * pitch + x * 4;
+            let px = buf.get(i..i + 4)?;
+            let (b, g, r, a) = (px[0], px[1], px[2], px[3]);
+            let rgba = if masked {
+                if a == 0 {
+                    [r, g, b, 255]
+                } else if r == 0 && g == 0 && b == 0 {
+                    [0, 0, 0, 0]
+                } else {
+                    [r, g, b, 255]
+                }
+            } else {
+                [r, g, b, a]
+            };
+            out.extend_from_slice(&rgba);
+        }
+    }
+    Some((width, height, out))
+}
+
 /// Captura do monitor principal.
 pub struct DxgiCapture {
     session: Option<Session>,
     frame: BgraFrame,
     has_frame: bool,
+    cursor_visible: Option<bool>,
+    cursor_updates: VecDeque<CursorUpdate>,
+    shape_buffer: Vec<u8>,
 }
 
 impl DxgiCapture {
@@ -191,6 +261,9 @@ impl DxgiCapture {
             session: Some(session),
             frame: BgraFrame::new(2, 2),
             has_frame: false,
+            cursor_visible: None,
+            cursor_updates: VecDeque::new(),
+            shape_buffer: Vec::new(),
         })
     }
 
@@ -201,6 +274,58 @@ impl DxgiCapture {
             self.session = Some(session);
         }
         Ok(self.session.as_mut().expect("aberta acima"))
+    }
+
+    /// Lê visibilidade e forma do ponteiro do quadro adquirido.
+    fn read_pointer(
+        &mut self,
+        duplication: &IDXGIOutputDuplication,
+        info: &DXGI_OUTDUPL_FRAME_INFO,
+    ) {
+        if info.LastMouseUpdateTime == 0 {
+            return;
+        }
+        let visible = info.PointerPosition.Visible.as_bool();
+        if self.cursor_visible != Some(visible) {
+            self.cursor_visible = Some(visible);
+            self.cursor_updates
+                .push_back(CursorUpdate::Visible(visible));
+        }
+        if info.PointerShapeBufferSize == 0 {
+            return;
+        }
+        self.shape_buffer
+            .resize(info.PointerShapeBufferSize as usize, 0);
+        let mut required = 0u32;
+        let mut shape = DXGI_OUTDUPL_POINTER_SHAPE_INFO::default();
+        // SAFETY: o buffer tem o tamanho informado pela DXGI.
+        let result = unsafe {
+            duplication.GetFramePointerShape(
+                self.shape_buffer.len() as u32,
+                self.shape_buffer.as_mut_ptr().cast(),
+                &mut required,
+                &mut shape,
+            )
+        };
+        if let Err(err) = result {
+            warn!(%err, "não foi possível ler a forma do cursor");
+            return;
+        }
+        if let Some((width, height, rgba)) = pointer_to_rgba(
+            shape.Type,
+            shape.Width,
+            shape.Height,
+            shape.Pitch,
+            &self.shape_buffer,
+        ) {
+            self.cursor_updates.push_back(CursorUpdate::Shape {
+                width,
+                height,
+                hot_x: shape.HotSpot.x.max(0) as u32,
+                hot_y: shape.HotSpot.y.max(0) as u32,
+                rgba,
+            });
+        }
     }
 
     fn lose(&mut self, err: CaptureError) -> CaptureError {
@@ -286,6 +411,7 @@ impl FrameSource for DxgiCapture {
             }
         }
 
+        self.read_pointer(&duplication, &info);
         // Só o cursor mexeu (LastPresentTime 0): a imagem não mudou.
         let changed = info.LastPresentTime != 0 || !self.has_frame;
         let result = match (&resource, changed) {
@@ -304,10 +430,49 @@ impl FrameSource for DxgiCapture {
         }
     }
 
+    fn take_cursor(&mut self) -> Option<CursorUpdate> {
+        self.cursor_updates.pop_front()
+    }
+
     fn name(&self) -> String {
         match &self.session {
             Some(s) => format!("DXGI Desktop Duplication ({})", s.output_name),
             None => "DXGI Desktop Duplication".into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cursor_monocromatico() {
+        // 2×1: AND = [1,0], XOR = [0,1] → transparente, branco.
+        let buf = [0b1000_0000, 0b0100_0000];
+        let (w, h, rgba) = pointer_to_rgba(
+            DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME.0 as u32,
+            2,
+            2,
+            1,
+            &buf,
+        )
+        .unwrap();
+        assert_eq!((w, h), (2, 1));
+        assert_eq!(rgba, vec![0, 0, 0, 0, 255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn cursor_colorido_troca_bgra_por_rgba() {
+        let buf = [1, 2, 3, 128];
+        let (_, _, rgba) = pointer_to_rgba(
+            DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR.0 as u32,
+            1,
+            1,
+            4,
+            &buf,
+        )
+        .unwrap();
+        assert_eq!(rgba, vec![3, 2, 1, 128]);
     }
 }

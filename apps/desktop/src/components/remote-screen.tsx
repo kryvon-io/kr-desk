@@ -1,6 +1,7 @@
 import {
   Activity,
   Eye,
+  KeyRound,
   Monitor,
   Loader2,
   Maximize,
@@ -249,6 +250,18 @@ export function RemoteScreen({
                 );
               })}
             </div>
+          )}
+          {p2p.authenticated && p2p.control && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1.5 text-white hover:bg-white/15 hover:text-white"
+              title="Envia Ctrl+Alt+Del ao computador remoto (precisa do serviço do KR Desk instalado lá)"
+              onClick={() => peer?.sendInput({ t: "ctrl_alt_del" })}
+            >
+              <KeyRound className="size-3.5" />
+              Ctrl+Alt+Del
+            </Button>
           )}
           <Button
             variant="ghost"

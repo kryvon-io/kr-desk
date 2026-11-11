@@ -43,15 +43,68 @@ impl InputSink for LogSink {
     }
 }
 
+/// Entrada no host: pelo agente do serviço (alcança janelas de administrador,
+/// UAC e tela de bloqueio) ou, sem ele, `SendInput` neste processo.
 #[cfg(windows)]
-pub type HostSink = kr_input_win::SendInputSink;
+pub enum HostSink {
+    Agent(kr_core::agent::AgentInputSink<kr_service_win::PipeStream>),
+    Local(kr_input_win::SendInputSink),
+}
+
+#[cfg(windows)]
+impl kr_core::input::InputSink for HostSink {
+    fn move_to(&mut self, x: u16, y: u16) {
+        match self {
+            Self::Agent(s) => s.move_to(x, y),
+            Self::Local(s) => s.move_to(x, y),
+        }
+    }
+    fn button(&mut self, button: kr_proto::control::MouseButton, down: bool) {
+        match self {
+            Self::Agent(s) => s.button(button, down),
+            Self::Local(s) => s.button(button, down),
+        }
+    }
+    fn wheel(&mut self, dx: i32, dy: i32) {
+        match self {
+            Self::Agent(s) => s.wheel(dx, dy),
+            Self::Local(s) => s.wheel(dx, dy),
+        }
+    }
+    fn key(&mut self, code: u16, ext: bool, down: bool) {
+        match self {
+            Self::Agent(s) => s.key(code, ext, down),
+            Self::Local(s) => s.key(code, ext, down),
+        }
+    }
+    fn secure_attention(&mut self) {
+        match self {
+            Self::Agent(s) => s.secure_attention(),
+            Self::Local(s) => s.secure_attention(),
+        }
+    }
+}
+
 #[cfg(not(windows))]
 pub type HostSink = LogSink;
 
 /// Controlador do host; `area` diz qual monitor está sendo transmitido.
 #[cfg(windows)]
 pub fn host_controller(area: kr_core::media::SharedArea) -> InputController<HostSink> {
-    InputController::new(HostSink::new(area))
+    let sink = match kr_core::agent::AgentInputSink::connect(
+        Box::new(kr_service_win::connect_agent),
+        area.clone(),
+    ) {
+        Ok(s) => {
+            tracing::info!("entrada remota pelo serviço do KR Desk");
+            HostSink::Agent(s)
+        }
+        Err(err) => {
+            tracing::info!(%err, "serviço indisponível; entrada remota neste processo");
+            HostSink::Local(kr_input_win::SendInputSink::new(area))
+        }
+    };
+    InputController::new(sink)
 }
 
 #[cfg(not(windows))]

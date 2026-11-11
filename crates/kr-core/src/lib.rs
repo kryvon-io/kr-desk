@@ -3,6 +3,7 @@
 //! Contém as traits implementadas pelos crates `*-win` e a lógica que não
 //! depende do Windows (ex.: o pipeline de vídeo em [`media`]).
 
+pub mod agent;
 pub mod input;
 pub mod media;
 

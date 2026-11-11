@@ -33,6 +33,7 @@ uuid.workspace = true
 kr-capture-win.workspace = true
 kr-codec-win.workspace = true
 kr-input-win.workspace = true
+kr-service-win.workspace = true
 windows.workspace = true
 
 [lints]

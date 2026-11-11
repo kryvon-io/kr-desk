@@ -146,6 +146,7 @@ fn is_input(msg: &ControlMessage) -> bool {
             | ControlMessage::Wheel { .. }
             | ControlMessage::Key { .. }
             | ControlMessage::ReleaseAll
+            | ControlMessage::CtrlAltDel
     )
 }
 

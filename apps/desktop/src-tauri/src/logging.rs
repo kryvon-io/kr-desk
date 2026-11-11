@@ -1,4 +1,5 @@
-//! Log em arquivo (`%LOCALAPPDATA%\com.krdesk.app\logs\kr-desk.log`).
+//! Log em arquivo (`%LOCALAPPDATA%\com.krdesk.app\logs\kr-desk.log`; o
+//! serviço e o agente escrevem em `logs\` na pasta de instalação).
 //!
 //! Na versão final não há console; sem este arquivo, um erro ao iniciar
 //! fecharia o app sem deixar rastro.
@@ -12,13 +13,13 @@ use tracing_subscriber::EnvFilter;
 /// Tamanho a partir do qual o log antigo é renomeado para `.old`.
 const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 
-pub fn init(dir: &Path) {
+pub fn init(dir: &Path, file: &str) {
     if fs::create_dir_all(dir).is_err() {
         return;
     }
-    let path = dir.join("kr-desk.log");
+    let path = dir.join(file);
     if fs::metadata(&path).is_ok_and(|m| m.len() > MAX_LOG_BYTES) {
-        let _ = fs::rename(&path, dir.join("kr-desk.log.old"));
+        let _ = fs::rename(&path, dir.join(format!("{file}.old")));
     }
     let Ok(file) = OpenOptions::new().create(true).append(true).open(&path) else {
         return;

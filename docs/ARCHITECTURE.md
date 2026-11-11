@@ -1,6 +1,6 @@
 # KR Desk — Validação de stack, arquitetura e plano de etapas
 
-> Status (10/11/2026): Etapas 0–6 concluídas (MVP) · Etapa 7, parte 1 concluída · parte 2 (reconexão e captura WGC) em PR. Revisão de ameaças: `docs/SECURITY-REVIEW.md`. Repositório público `kryvon-io/kr-desk` (AGPL-3.0).
+> Status (11/11/2026): Etapas 0–7 concluídas · Etapa 8, parte 1 (serviço: UAC, tela de bloqueio, Ctrl+Alt+Del) em PR · parte 2 (acesso não assistido com senha) a seguir. Revisão de ameaças: `docs/SECURITY-REVIEW.md`. Repositório público `kryvon-io/kr-desk` (AGPL-3.0).
 
 ---
 
@@ -34,7 +34,7 @@
 2. **O WebView2 já tem WebRTC nativo** (Chromium) com decodificação H.264 por hardware e `<video>` de baixa latência (`jitterBufferTarget` próximo de 0).
 3. **webrtc-rs ↔ Chromium interoperam em H.264** se usarmos `packetization-mode=1` e o perfil Constrained Baseline (`42e01f`), sem B-frames.
 4. **DXGI Desktop Duplication** não captura a _secure desktop_ (UAC, tela de bloqueio) a menos que rode como SYSTEM nessa desktop, e falha em alguns notebooks híbridos ou VMs. Fallback: Windows.Graphics.Capture.
-5. **SendInput** é bloqueado pelo UIPI para janelas elevadas (admin). Ctrl+Alt+Del exige `SendSAS` a partir de um serviço. Ambos ficam para a Etapa 8 (serviço Windows).
+5. **SendInput** é bloqueado pelo UIPI para janelas elevadas (admin). Ctrl+Alt+Del exige `SendSAS` a partir de um serviço. Ambos resolvidos na Etapa 8 (serviço Windows, ver "Serviço Windows" em 2.5).
 6. **Atalhos de sistema no viewer** (Win, Alt+Tab) não chegam ao JavaScript; é preciso um hook nativo `WH_KEYBOARD_LL` em Rust enquanto a janela de sessão estiver em foco.
 7. **Neon tem cold start.** Presença online e roteamento de sinalização ficam no Redis; o banco guarda só dados duráveis.
 8. **Sinalização na Vercel:** o WebSocket funciona, mas cada conexão vive no máximo a duração da função, e clientes diferentes podem cair em instâncias diferentes. Por isso: (a) o cliente Rust reconecta de forma transparente (antes do limite, com jitter); (b) presença e roteamento ficam no Redis com pub/sub, nunca em memória; (c) a sessão WebRTC **não depende** do WebSocket depois de estabelecida, então uma reconexão da sinalização não derruba a sessão remota.
@@ -131,6 +131,16 @@ Princípio: tudo que é específico de Windows fica em crates `*-win` atrás de 
 - Liberação de todas as teclas/botões pressionados ao perder foco ou encerrar a sessão (evita tecla "presa").
 - **Implementado na Etapa 5:** DataChannel `input` (sem ordem, `maxRetransmits: 0`) só para movimentos; cliques, roda e teclas no `control`, com a posição junto do clique. No host, `InputController` (`kr-core`) rastreia o que está pressionado e solta tudo ao fechar o canal; `SendInputSink` (`kr-input-win`) mapeia para o monitor principal na área de trabalho virtual. No viewer, hook `WH_KEYBOARD_LL` ativo só com a tela remota aberta e a janela em primeiro plano (scancode e flag estendida direto do Windows); fora do app, mapa `KeyboardEvent.code` → scancode. Cursor: a forma vem da DXGI (`GetFramePointerShape`) pelo canal de controle e vira o `cursor` CSS do `<video>` — sem atraso de vídeo.
 - **Seleção de monitor (complemento da Etapa 5):** a captura lista os monitores ligados à área de trabalho (principal primeiro, depois da esquerda para a direita) e envia `monitors` ao viewer; o viewer escolhe com `select_monitor`. A captura reabre a duplicação no monitor escolhido, o encoder é recriado no novo tamanho e a área desse monitor (`SharedArea`) passa a ser o alvo do mouse. "Todas as telas numa imagem só" fica para depois.
+
+**Serviço Windows (Etapa 8, parte 1):** o instalador passa a ser por máquina (Arquivos de Programas, exige administrador) e registra o serviço `KRDeskService` (LocalSystem, início automático, reinício em falha), que roda o mesmo `kr-desk.exe` com `--service`.
+
+- O serviço mantém um **agente** (`kr-desk.exe --agent`) como SYSTEM na sessão do console (`CreateProcessAsUser` com o token do serviço e `TokenSessionId`), recriando-o se a sessão mudar ou ele cair.
+- O agente segue a área de trabalho ativa (`OpenInputDesktop` + `SetThreadDesktop`), por isso captura e injeta entrada também no UAC, na tela de bloqueio e em janelas de administrador.
+- App ↔ agente: named pipe `\\.\pipe\kr-desk-agent-<sessão>` com protocolo binário próprio (`kr_core::agent`). Uma conexão de captura (pedido → eventos de cursor/monitores + quadro BGRA) e uma de entrada (comandos sem resposta). A codificação, a qualidade adaptativa e a rede continuam no app.
+- Sem o serviço (ou com `KR_DESK_CAPTURE=local`), o app captura e injeta por conta própria, como antes.
+- Ctrl+Alt+Del: botão na barra da sessão → mensagem `ctrl_alt_del` → agente escreve `sas` na saída padrão → o serviço chama `SendSAS` (com a política `SoftwareSASGeneration` liberada para serviços).
+- Proteções: o pipe só aceita usuários interativos (sem direito de criar instâncias) e conexões locais. Os dois lados conferem que o outro é o mesmo executável instalado, na mesma sessão. O agente sai quando a entrada padrão (segurada pelo serviço) fecha. Logs do serviço e do agente ficam em `logs\` na pasta de instalação, onde só administradores escrevem.
+- Parte 2 (a seguir): acesso não assistido com senha, inclusive na tela de login sem ninguém conectado.
 
 ### 2.6 Segurança
 

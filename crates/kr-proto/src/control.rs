@@ -109,6 +109,8 @@ pub enum ControlMessage {
     },
     /// Viewer → host: solta todas as teclas e botões (perda de foco, fim).
     ReleaseAll,
+    /// Viewer → host: Ctrl+Alt+Del (precisa do serviço do KR Desk no host).
+    CtrlAltDel,
     /// Host → viewer: nova forma do cursor.
     CursorShape(CursorImage),
     /// Host → viewer: cursor visível ou oculto (ex.: vídeo em tela cheia).

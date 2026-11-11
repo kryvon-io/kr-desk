@@ -468,6 +468,18 @@ impl HostPeer {
             .map_err(|e| TransportError::BadSignal(e.to_string()))?;
         match signal {
             SignalPayload::Offer { sdp } => {
+                // Nova oferta (inclusive reinício de ICE): os candidatos novos
+                // esperam a resposta, para o viewer conhecer o novo ufrag antes.
+                {
+                    let mut early = self.shared.early_candidates.lock().expect("mutex");
+                    if early.is_none() {
+                        *early = Some(Vec::new());
+                    }
+                }
+                let restart = self.has_remote.load(Ordering::SeqCst);
+                if restart {
+                    info!("nova oferta do viewer (reinício de ICE)");
+                }
                 let remote_fp = kr_proto::session::sdp_fingerprint(&sdp);
                 let offer = RTCSessionDescription::offer(sdp)?;
                 self.pc.set_remote_description(offer).await?;

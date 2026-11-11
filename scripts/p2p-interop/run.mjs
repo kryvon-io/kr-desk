@@ -85,6 +85,8 @@ async function scenario(tamper) {
   // No cenário normal, o host termina sozinho depois do "done" da página.
   if (tamper) proc.kill();
   const hostCode = await hostDone;
+  // Estado final (o teste de reconexão termina depois do "ok").
+  viewer = (await page.evaluate(() => window.__interop).catch(() => undefined)) ?? viewer;
   await page.close();
   return { hostCode, viewer, hostLine: lines.find((l) => l.startsWith("INTEROP_")) };
 }
@@ -99,7 +101,7 @@ await browser.close();
 server.close();
 
 let failed = false;
-if (normal.hostCode !== 0 || !normal.viewer?.ok) {
+if (normal.hostCode !== 0 || !normal.viewer?.ok || !normal.viewer?.reconnected) {
   console.error("FALHOU: interoperabilidade WebRTC Rust × Chrome");
   failed = true;
 }
@@ -109,5 +111,5 @@ if (mitm.viewer?.ok || !String(mitm.viewer?.error ?? "").startsWith("auth:")) {
 }
 if (failed) process.exit(1);
 console.log(
-  "OK: Rust (webrtc-rs) e Chrome se autenticaram, conectaram ponto a ponto, mediram a latência, o Chrome decodificou o vídeo H.264, entrada e cursor chegaram — e o fingerprint adulterado foi recusado.",
+  "OK: Rust (webrtc-rs) e Chrome se autenticaram, conectaram ponto a ponto, mediram a latência, o Chrome decodificou o vídeo H.264, entrada e cursor chegaram, a conexão voltou após reiniciar o ICE — e o fingerprint adulterado foi recusado.",
 );

@@ -148,6 +148,16 @@ export function RemoteScreen({
         }}
       />
 
+      {playing && (p2p.state === "reconnecting" || p2p.state === "disconnected") && (
+        <div className="absolute top-16 flex items-center gap-2 rounded-full bg-black/75 px-4 py-2 text-sm text-white">
+          <Loader2 className="size-4 animate-spin" /> Conexão perdida — reconectando…
+        </div>
+      )}
+      {playing && p2p.state === "failed" && (
+        <div className="absolute top-16 flex items-center gap-2 rounded-full bg-red-900/80 px-4 py-2 text-sm text-white">
+          <TriangleAlert className="size-4" /> Não foi possível reconectar.
+        </div>
+      )}
       {!playing && (
         <div className="absolute flex flex-col items-center gap-3 text-sm text-white/80">
           {failed ? (

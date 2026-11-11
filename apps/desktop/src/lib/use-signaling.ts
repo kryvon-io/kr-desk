@@ -110,7 +110,13 @@ export function useSignaling() {
               console.warn("falha ao enviar sinal", err),
             );
           },
-          onState: (s) => update({ state: s }),
+          onState: (s) => {
+            update({ state: s });
+            if (s === "failed" && peer.isAuthenticated) {
+              // A reconexão desistiu: encerra a sessão dos dois lados.
+              invoke("end_session", { requestId }).catch(() => undefined);
+            }
+          },
           onRtt: (ms) => update({ rttMs: ms }),
           onRoute: (route) => update({ route }),
           onVideo: (stream) => {

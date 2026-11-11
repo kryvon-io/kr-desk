@@ -101,6 +101,7 @@ async fn main() {
         let mut quality = kr_core::media::quality::QualityController::new(1_500_000, 300_000, 3_000_000);
         let mut rx_reports = 0u32;
         let mut clipboard_from_viewer: Option<String> = None;
+        let mut offers = 0u32;
         let mut input = InputController::new(Recorder::default());
         let mut video: Option<VideoStream> = None;
 
@@ -113,6 +114,9 @@ async fn main() {
                         };
                         if !viewer_authenticated {
                             break Err("viewer não se autenticou".to_string());
+                        }
+                        if offers < 2 {
+                            break Err("viewer não reiniciou o ICE".to_string());
                         }
                         if rx_reports == 0 {
                             break Err("viewer não mandou relatórios de recepção".to_string());
@@ -133,7 +137,7 @@ async fn main() {
                             ));
                         }
                         let msg = format!(
-                            "INTEROP_OK rtt_ms={} route={:?}/{:?}/{} keyframe_requests={} input=moves:{}/buttons:{}/keys:{} rx_reports={}",
+                            "INTEROP_OK rtt_ms={} route={:?}/{:?}/{} keyframe_requests={} input=moves:{}/buttons:{}/keys:{} rx_reports={} offers={}",
                             rtt.as_millis(),
                             route.local,
                             route.remote,
@@ -143,6 +147,7 @@ async fn main() {
                             rec.buttons,
                             rec.keys,
                             rx_reports,
+                            offers,
                         );
                         drop(video.take());
                         host.close().await;
@@ -150,6 +155,9 @@ async fn main() {
                     }
                     Some(Ok(Message::Text(t))) => {
                         let payload: serde_json::Value = serde_json::from_str(&t).expect("json");
+                        if payload["kind"] == "offer" {
+                            offers += 1;
+                        }
                         if let Err(e) = host.handle_signal(payload).await {
                             eprintln!("erro no sinal: {e}");
                         }

@@ -37,7 +37,8 @@ export interface IceServerDto {
   credential?: string;
 }
 
-export type PeerState = "connecting" | "connected" | "disconnected" | "failed" | "closed";
+export type PeerState =
+  "connecting" | "connected" | "disconnected" | "reconnecting" | "failed" | "closed";
 
 export interface RouteInfo {
   local: CandidateType;
@@ -77,6 +78,13 @@ export interface ViewerAuth {
 }
 
 const PING_INTERVAL_MS = 1000;
+/** Espera após "disconnected" antes de reiniciar o ICE (quedas curtas voltam sozinhas). */
+const RESTART_AFTER_MS = 2000;
+/** Intervalo entre tentativas de reinício de ICE. */
+const RESTART_RETRY_MS = 8000;
+/** Desiste da reconexão depois disso (igual ao prazo do host). */
+const RECONNECT_GIVE_UP_MS = 45_000;
+
 /** Intervalo dos relatórios de recepção (qualidade adaptativa). */
 const RX_REPORT_MS = 1000;
 /** Prazo para o host provar a identidade depois que o canal abre. */
@@ -101,6 +109,8 @@ export class ViewerPeer {
   private controlAllowed = false;
   private lastRttMs = 0;
   private lastRx: { lost: number; received: number } | null = null;
+  /** Reconexão em andamento: quando começou e o próximo passo agendado. */
+  private reconnect: { since: number; timer: ReturnType<typeof setTimeout> } | null = null;
 
   constructor(
     iceServers: IceServerDto[],
@@ -128,10 +138,10 @@ export class ViewerPeer {
     this.pc.onicecandidate = (e) => {
       if (e.candidate) this.events.onSignal({ kind: "candidate", candidate: e.candidate.toJSON() });
     };
-    this.pc.onconnectionstatechange = () => {
-      const s = this.pc.connectionState;
-      this.events.onState?.(s === "new" ? "connecting" : (s as PeerState));
-      if (s === "connected") void this.reportRoute();
+    this.pc.onconnectionstatechange = () => this.onConnectionState();
+    this.pc.oniceconnectionstatechange = () => {
+      const ice = this.pc.iceConnectionState;
+      if (this.reconnect && (ice === "connected" || ice === "completed")) this.finishReconnect();
     };
 
     this.control.onopen = () => {
@@ -147,6 +157,68 @@ export class ViewerPeer {
   }
 
   /** Inicia a negociação: cria e envia a oferta. */
+  private onConnectionState() {
+    if (this.closed) return;
+    const s = this.pc.connectionState;
+    if (s === "connected") {
+      this.finishReconnect();
+      this.events.onState?.("connected");
+      void this.reportRoute();
+      return;
+    }
+    if (s === "disconnected" || s === "failed") {
+      // Já conectou uma vez: tenta reconectar (troca de rede, queda curta).
+      if (this.authDone && this.authenticated) {
+        if (!this.reconnect) {
+          this.events.onState?.("reconnecting");
+          this.reconnect = {
+            since: Date.now(),
+            timer: setTimeout(() => void this.restartIce(), s === "failed" ? 0 : RESTART_AFTER_MS),
+          };
+        }
+        return;
+      }
+    }
+    this.events.onState?.(s === "new" ? "connecting" : (s as PeerState));
+  }
+
+  /** A conexão voltou (o estado pode nem ter mudado, se o caminho antigo ainda servia). */
+  private finishReconnect() {
+    if (!this.reconnect) return;
+    clearTimeout(this.reconnect.timer);
+    this.reconnect = null;
+    // Imagem nova logo de cara, sem esperar o próximo keyframe periódico.
+    this.requestKeyframe();
+    this.events.onState?.("connected");
+  }
+
+  /** Força uma reconexão (reinício de ICE), ex.: depois de trocar de rede. */
+  reconnectNow() {
+    if (this.closed || this.reconnect) return;
+    this.events.onState?.("reconnecting");
+    this.reconnect = { since: Date.now(), timer: setTimeout(() => void this.restartIce(), 0) };
+  }
+
+  /** Reinicia o ICE (nova oferta com credenciais novas) até reconectar. */
+  private async restartIce() {
+    if (this.closed || !this.reconnect) return;
+    if (Date.now() - this.reconnect.since > RECONNECT_GIVE_UP_MS) {
+      this.reconnect = null;
+      this.events.onState?.("failed");
+      return;
+    }
+    try {
+      const offer = await this.pc.createOffer({ iceRestart: true });
+      await this.pc.setLocalDescription(offer);
+      this.events.onSignal({ kind: "offer", sdp: offer.sdp ?? "" });
+    } catch (err) {
+      console.warn("reinício de ICE falhou", err);
+    }
+    if (this.reconnect) {
+      this.reconnect.timer = setTimeout(() => void this.restartIce(), RESTART_RETRY_MS);
+    }
+  }
+
   async start(): Promise<void> {
     const offer = await this.pc.createOffer();
     await this.pc.setLocalDescription(offer);
@@ -159,6 +231,8 @@ export class ViewerPeer {
     if (payload.kind === "answer") {
       await this.pc.setRemoteDescription({ type: "answer", sdp: payload.sdp });
       for (const c of this.pendingCandidates.splice(0)) await this.pc.addIceCandidate(c);
+      const ice = this.pc.iceConnectionState;
+      if (this.reconnect && (ice === "connected" || ice === "completed")) this.finishReconnect();
     } else if (payload.kind === "candidate") {
       if (this.pc.remoteDescription) await this.pc.addIceCandidate(payload.candidate);
       else this.pendingCandidates.push(payload.candidate);
@@ -365,6 +439,8 @@ export class ViewerPeer {
     if (this.closed) return;
     this.closed = true;
     this.stopTimers();
+    if (this.reconnect) clearTimeout(this.reconnect.timer);
+    this.reconnect = null;
     if (this.control.readyState === "open") this.control.send(JSON.stringify({ t: "release_all" }));
     this.input.close();
     this.control.close();

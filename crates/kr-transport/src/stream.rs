@@ -159,6 +159,11 @@ impl VideoStream {
         self.control.request_keyframe();
     }
 
+    /// Ajusta taxa e resolução máxima (controle adaptativo).
+    pub fn set_quality(&self, target: kr_core::media::quality::QualityTarget) {
+        self.control.request_quality(target);
+    }
+
     /// Passa a transmitir outro monitor.
     pub fn select_monitor(&self, index: u32) {
         self.control.request_monitor(index);

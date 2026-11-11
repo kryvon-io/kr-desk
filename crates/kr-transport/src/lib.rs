@@ -129,6 +129,10 @@ pub enum PeerEvent {
         pk: String,
         sig: String,
     },
+    /// Relatório de recepção do viewer (qualidade adaptativa).
+    RxReport(kr_core::media::quality::RxReport),
+    /// Texto copiado no viewer.
+    Clipboard(String),
     /// Entrada remota (mouse/teclado) do viewer. Ao fechar o canal de
     /// controle, chega um `ReleaseAll`.
     Input(ControlMessage),
@@ -338,6 +342,22 @@ async fn control_loop(dc: Arc<dyn DataChannel>, shared: Arc<Shared>) {
                     }
                     Ok(ControlMessage::Auth { pk, sig }) => {
                         shared.emit(PeerEvent::PeerAuth { pk, sig });
+                    }
+                    Ok(ControlMessage::RxReport {
+                        lost,
+                        received,
+                        rtt_ms,
+                    }) => {
+                        shared.emit(PeerEvent::RxReport(kr_core::media::quality::RxReport {
+                            lost,
+                            received,
+                            rtt_ms,
+                        }));
+                    }
+                    Ok(ControlMessage::Clipboard { text }) => {
+                        if text.chars().count() <= kr_proto::control::MAX_CLIPBOARD_CHARS {
+                            shared.emit(PeerEvent::Clipboard(text));
+                        }
                     }
                     Ok(msg) if is_input(&msg) => shared.emit(PeerEvent::Input(msg)),
                     Ok(other) => debug!(?other, "mensagem de controle ignorada"),

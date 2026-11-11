@@ -287,13 +287,32 @@ impl MfEncoder {
         }
     }
 
-    fn set_codec(&self, api: &GUID, value: VARIANT, label: &str) {
-        let Some(codec) = &self.codec else { return };
+    fn set_codec(&self, api: &GUID, value: VARIANT, label: &str) -> bool {
+        let Some(codec) = &self.codec else {
+            return false;
+        };
         // SAFETY: GUID e VARIANT válidos durante a chamada.
-        if let Err(e) = unsafe { codec.SetValue(api, &value) } {
-            // Nem todo encoder aceita todas as opções; seguimos sem ela.
-            warn!(encoder = %self.name, option = label, %e, "opção do encoder ignorada");
+        match unsafe { codec.SetValue(api, &value) } {
+            Ok(()) => true,
+            Err(e) => {
+                // Nem todo encoder aceita todas as opções; seguimos sem ela.
+                warn!(encoder = %self.name, option = label, %e, "opção do encoder ignorada");
+                false
+            }
         }
+    }
+
+    /// Muda a taxa média durante a codificação (CBR).
+    pub fn change_bitrate(&mut self, bps: u32) -> bool {
+        let ok = self.set_codec(
+            &CODECAPI_AVEncCommonMeanBitRate,
+            VARIANT::from(bps),
+            "MeanBitRate (dinâmico)",
+        );
+        if ok {
+            self.config.bitrate_bps = bps;
+        }
+        ok
     }
 
     fn configure(&mut self) -> Result<(), EncodeError> {
@@ -624,6 +643,12 @@ impl VideoEncoder for FallbackEncoder {
             }
             other => other,
         }
+    }
+
+    fn set_bitrate(&mut self, bps: u32) -> bool {
+        // Mantém a taxa nova se for preciso recriar (troca para software).
+        self.config.bitrate_bps = bps;
+        self.inner.change_bitrate(bps)
     }
 
     fn name(&self) -> String {

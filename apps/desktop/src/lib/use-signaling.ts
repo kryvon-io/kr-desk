@@ -118,6 +118,11 @@ export function useSignaling() {
           },
           onVerificationCode: (code) => update({ verificationCode: code }),
           onPermissions: (control) => update({ control }),
+          onClipboard: (text) => {
+            invoke("write_clipboard", { text }).catch((err: unknown) =>
+              console.warn("falha ao escrever na área de transferência", err),
+            );
+          },
           onAuth: (outcome) => {
             if (outcome.result === "ok") {
               update({ authenticated: true, firstContact: outcome.firstContact });

@@ -49,6 +49,7 @@ pub fn run() {
             app.manage(bridge);
             tray::create(app.handle())?;
             app.manage(remote_input::KeyboardCapture::install(app.handle()));
+            app.manage(remote_input::ViewerClipboard::default());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -72,6 +73,8 @@ pub fn run() {
             commands::verify_session,
             commands::forget_peer,
             commands::set_session_control,
+            commands::set_viewer_clipboard,
+            commands::write_clipboard,
         ])
         .run(tauri::generate_context!())
         .expect("falha ao iniciar o KR Desk");

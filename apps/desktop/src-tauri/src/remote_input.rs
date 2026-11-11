@@ -105,3 +105,51 @@ impl KeyboardCapture {
         false
     }
 }
+
+/// Área de transferência de texto (no Windows, a real; fora dele, nada).
+#[cfg(windows)]
+pub use kr_input_win::ClipboardSync;
+
+#[cfg(not(windows))]
+pub struct ClipboardSync;
+
+#[cfg(not(windows))]
+impl ClipboardSync {
+    pub fn start(_on_change: impl Fn(String) + Send + 'static) -> Self {
+        Self
+    }
+
+    pub fn set_remote(&self, _text: &str) {}
+}
+
+/// Evento com texto copiado neste computador durante uma sessão como viewer.
+pub const EVENT_LOCAL_CLIPBOARD: &str = "local-clipboard";
+
+/// Clipboard do viewer: ligado só com a sessão autenticada e com controle.
+#[derive(Default)]
+pub struct ViewerClipboard(std::sync::Mutex<Option<ClipboardSync>>);
+
+impl ViewerClipboard {
+    pub fn set_enabled(&self, app: &AppHandle, enabled: bool) {
+        let Ok(mut slot) = self.0.lock() else { return };
+        if !enabled {
+            *slot = None;
+            return;
+        }
+        if slot.is_none() {
+            let app = app.clone();
+            *slot = Some(ClipboardSync::start(move |text| {
+                use tauri::Emitter as _;
+                let _ = app.emit(EVENT_LOCAL_CLIPBOARD, text);
+            }));
+        }
+    }
+
+    pub fn set_remote(&self, text: &str) {
+        if let Ok(slot) = self.0.lock()
+            && let Some(sync) = slot.as_ref()
+        {
+            sync.set_remote(text);
+        }
+    }
+}

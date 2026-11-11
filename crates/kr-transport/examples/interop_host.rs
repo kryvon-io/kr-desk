@@ -98,6 +98,9 @@ async fn main() {
         let tamper = std::env::var("KR_INTEROP_TAMPER").is_ok_and(|v| v == "1");
         let mut fingerprints: Option<(String, String)> = None;
         let mut viewer_authenticated = false;
+        let mut quality = kr_core::media::quality::QualityController::new(1_500_000, 300_000, 3_000_000);
+        let mut rx_reports = 0u32;
+        let mut clipboard_from_viewer: Option<String> = None;
         let mut input = InputController::new(Recorder::default());
         let mut video: Option<VideoStream> = None;
 
@@ -111,6 +114,14 @@ async fn main() {
                         if !viewer_authenticated {
                             break Err("viewer não se autenticou".to_string());
                         }
+                        if rx_reports == 0 {
+                            break Err("viewer não mandou relatórios de recepção".to_string());
+                        }
+                        if clipboard_from_viewer.as_deref() != Some("olá do viewer ç") {
+                            break Err(format!(
+                                "área de transferência do viewer não chegou: {clipboard_from_viewer:?}"
+                            ));
+                        }
                         if monitor_selected != Some(1) {
                             break Err("viewer não trocou de monitor".to_string());
                         }
@@ -122,7 +133,7 @@ async fn main() {
                             ));
                         }
                         let msg = format!(
-                            "INTEROP_OK rtt_ms={} route={:?}/{:?}/{} keyframe_requests={} input=moves:{}/buttons:{}/keys:{}",
+                            "INTEROP_OK rtt_ms={} route={:?}/{:?}/{} keyframe_requests={} input=moves:{}/buttons:{}/keys:{} rx_reports={}",
                             rtt.as_millis(),
                             route.local,
                             route.remote,
@@ -131,6 +142,7 @@ async fn main() {
                             rec.moves,
                             rec.buttons,
                             rec.keys,
+                            rx_reports,
                         );
                         drop(video.take());
                         host.close().await;
@@ -168,12 +180,23 @@ async fn main() {
                                 if video.is_none() {
                                     video = Some(start_video(&host));
                                 }
+                                host.send_control(&ControlMessage::Clipboard {
+                                    text: "olá do host ✓".into(),
+                                })
+                                .await;
                             }
                             Err(err) => break Err(format!("viewer não autenticado: {err}")),
                         }
                     }
                     PeerEvent::Rtt(d) => rtt = Some(d),
                     PeerEvent::Route(r) => route = Some(r),
+                    PeerEvent::RxReport(report) => {
+                        rx_reports += 1;
+                        if let (Some(t), Some(v)) = (quality.on_report(report), &video) {
+                            v.set_quality(t);
+                        }
+                    }
+                    PeerEvent::Clipboard(text) => clipboard_from_viewer = Some(text),
                     PeerEvent::SelectMonitor(index) => {
                         monitor_selected = Some(index);
                         if let Some(v) = &video {

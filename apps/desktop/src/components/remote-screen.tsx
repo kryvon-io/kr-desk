@@ -24,6 +24,7 @@ import {
 } from "@/lib/video-stats";
 import type { MonitorInfo } from "@/lib/control";
 import type { ViewerPeer } from "@/lib/viewer-peer";
+import { useClipboardSync } from "@/lib/use-clipboard-sync";
 import { useRemoteInput } from "@/lib/use-remote-input";
 
 /** Some a barra depois deste tempo (com vídeo na tela). */
@@ -89,6 +90,7 @@ export function RemoteScreen({
   // hook não segura as teclas locais).
   const canControl = session.p2p.authenticated && session.p2p.control;
   useRemoteInput(video, peer, playing && canControl, tauri);
+  useClipboardSync(peer, canControl, tauri);
 
   useEffect(() => {
     const el = video.current;

@@ -7,16 +7,21 @@
 //! - [`KeyboardHook`] (viewer): hook `WH_KEYBOARD_LL` que, com a janela da
 //!   sessão em primeiro plano, captura todas as teclas — inclusive Win,
 //!   Alt+Tab e Alt+F4 — e as entrega ao app em vez de ao Windows local.
+//! - [`ClipboardSync`] (ambos): texto copiado de um lado aparece no outro.
 //!
 //! Limitações conhecidas: janelas elevadas (administrador) ignoram a entrada
 //! por causa do UIPI, e Ctrl+Alt+Del não pode ser enviado; ambos ficam para o
 //! serviço da Etapa 8.
 
 #[cfg(windows)]
+mod clipboard;
+#[cfg(windows)]
 mod hook;
 #[cfg(windows)]
 mod send;
 
+#[cfg(windows)]
+pub use clipboard::{ClipboardSync, read_text, write_text};
 #[cfg(windows)]
 pub use hook::{HookKey, KeyboardHook};
 #[cfg(windows)]

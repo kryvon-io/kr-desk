@@ -82,8 +82,11 @@ const PING_INTERVAL_MS = 1000;
 const RESTART_AFTER_MS = 2000;
 /** Intervalo entre tentativas de reinício de ICE. */
 const RESTART_RETRY_MS = 5000;
-/** Desiste da reconexão depois disso (igual ao prazo do host). */
-const RECONNECT_GIVE_UP_MS = 60_000;
+/**
+ * Desiste da reconexão depois disso (igual ao prazo do host). Quedas de rede
+ * reais costumam passar de 1 min até o DNS e a sinalização voltarem.
+ */
+const RECONNECT_GIVE_UP_MS = 180_000;
 
 /** Intervalo dos relatórios de recepção (qualidade adaptativa). */
 const RX_REPORT_MS = 1000;
@@ -111,6 +114,8 @@ export class ViewerPeer {
   private lastRx: { lost: number; received: number } | null = null;
   /** Reconexão em andamento: quando começou e o próximo passo agendado. */
   private reconnect: { since: number; timer: ReturnType<typeof setTimeout> } | null = null;
+  /** A reconexão já desistiu: não recomeça sozinha (evita ciclo infinito). */
+  private gaveUp = false;
 
   constructor(
     iceServers: IceServerDto[],
@@ -169,6 +174,7 @@ export class ViewerPeer {
     if (s === "disconnected" || s === "failed") {
       // Já conectou uma vez: tenta reconectar (troca de rede, queda curta).
       if (this.authDone && this.authenticated) {
+        if (this.gaveUp) return;
         if (!this.reconnect) {
           this.events.onState?.("reconnecting");
           this.reconnect = {
@@ -194,7 +200,7 @@ export class ViewerPeer {
 
   /** Força uma reconexão (reinício de ICE), ex.: depois de trocar de rede. */
   reconnectNow() {
-    if (this.closed || this.reconnect) return;
+    if (this.closed || this.reconnect || this.gaveUp) return;
     this.events.onState?.("reconnecting");
     this.reconnect = { since: Date.now(), timer: setTimeout(() => void this.restartIce(), 0) };
   }
@@ -204,6 +210,7 @@ export class ViewerPeer {
     if (this.closed || !this.reconnect) return;
     if (Date.now() - this.reconnect.since > RECONNECT_GIVE_UP_MS) {
       this.reconnect = null;
+      this.gaveUp = true;
       this.events.onState?.("failed");
       return;
     }
@@ -217,6 +224,16 @@ export class ViewerPeer {
     if (this.reconnect) {
       this.reconnect.timer = setTimeout(() => void this.restartIce(), RESTART_RETRY_MS);
     }
+  }
+
+  /**
+   * A sinalização voltou: se está reconectando, manda a oferta nova já, sem
+   * esperar a próxima tentativa (as anteriores se perderam com a rede fora).
+   */
+  signalingOnline() {
+    if (this.closed || !this.reconnect) return;
+    clearTimeout(this.reconnect.timer);
+    this.reconnect.timer = setTimeout(() => void this.restartIce(), 0);
   }
 
   async start(): Promise<void> {

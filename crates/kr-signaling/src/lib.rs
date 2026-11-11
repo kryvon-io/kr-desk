@@ -264,7 +264,20 @@ impl Client {
                 _ = &mut sleep => return Waited::Elapsed,
                 cmd = cmd_rx.recv() => match cmd {
                     None | Some(Command::Shutdown) => return Waited::Shutdown,
-                    Some(Command::Reconnect) => return Waited::Reconnect,
+                    Some(Command::Reconnect) => {
+                        // Pedidos repetidos enquanto offline viram uma tentativa só.
+                        loop {
+                            match cmd_rx.try_recv() {
+                                Ok(Command::Reconnect | Command::Send(_)) => {}
+                                Ok(Command::Shutdown) => return Waited::Shutdown,
+                                Err(mpsc::error::TryRecvError::Empty) => break,
+                                Err(mpsc::error::TryRecvError::Disconnected) => {
+                                    return Waited::Shutdown
+                                }
+                            }
+                        }
+                        return Waited::Reconnect;
+                    }
                     Some(Command::Send(_)) => {}
                 },
             }

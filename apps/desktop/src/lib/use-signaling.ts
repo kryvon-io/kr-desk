@@ -200,9 +200,11 @@ export function useSignaling() {
 
     void (async () => {
       unlisten.push(
-        await listen<ConnectionStatus>("signaling-status", (e) =>
-          dispatch({ type: "status", status: e.payload }),
-        ),
+        await listen<ConnectionStatus>("signaling-status", (e) => {
+          // Sinalização de volta: a sessão em reconexão reenvia a oferta já.
+          if (e.payload.state === "online") viewer.current?.peer.signalingOnline();
+          dispatch({ type: "status", status: e.payload });
+        }),
         await listen<ServerMessage>("signaling-message", (e) => onMessage(e.payload)),
         await listen<HostP2pStatus>("p2p-status", (e) =>
           dispatch({

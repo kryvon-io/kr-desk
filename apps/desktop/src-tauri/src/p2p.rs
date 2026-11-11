@@ -32,7 +32,7 @@ const MAX_BITRATE: u32 = 8_000_000;
 
 /// Tempo para a conexão voltar (reinício de ICE pelo viewer) antes de
 /// encerrar a sessão.
-const RECONNECT_GRACE: Duration = Duration::from_secs(60);
+const RECONNECT_GRACE: Duration = Duration::from_secs(180);
 
 /// Prazo para o viewer provar sua identidade depois que o canal abre.
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);

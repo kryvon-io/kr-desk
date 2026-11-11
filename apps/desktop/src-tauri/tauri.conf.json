@@ -43,7 +43,7 @@
         "type": "downloadBootstrapper"
       },
       "nsis": {
-        "installMode": "perMachine",
+        "installMode": "both",
         "installerHooks": "./windows/installer-hooks.nsh",
         "languages": ["PortugueseBR", "English"],
         "displayLanguageSelector": false

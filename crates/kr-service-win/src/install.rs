@@ -45,9 +45,32 @@ fn open(scm: &Sc) -> io::Result<Option<Sc>> {
     }
 }
 
+/// O serviço roda como SYSTEM: o executável precisa estar numa pasta onde só
+/// administradores escrevem (Arquivos de Programas). Numa instalação "só para
+/// mim" (`%LOCALAPPDATA%`), qualquer programa do usuário poderia trocá-lo.
+fn ensure_protected_location(exe: &std::path::Path) -> io::Result<()> {
+    let exe = exe.to_string_lossy().to_lowercase();
+    let protected = ["ProgramFiles", "ProgramW6432"]
+        .iter()
+        .filter_map(|v| std::env::var(v).ok())
+        .map(|dir| format!("{}\\", dir.trim_end_matches('\\').to_lowercase()))
+        .any(|dir| exe.starts_with(&dir));
+    if protected {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "o serviço só é instalado a partir de Arquivos de Programas (executável em {exe})"
+            ),
+        ))
+    }
+}
+
 /// Cria (ou atualiza) e inicia o serviço apontando para este executável.
 pub fn install_service() -> io::Result<()> {
     let exe = std::env::current_exe()?;
+    ensure_protected_location(&exe)?;
     let bin = wide(&format!("\"{}\" --service", exe.display()));
     let scm = manager()?;
     let service = match open(&scm)? {

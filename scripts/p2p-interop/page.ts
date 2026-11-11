@@ -130,7 +130,7 @@ ws.onopen = async () => {
   peer.start().catch((err: unknown) => (result.error = String(err)));
 
   let switchRequested: number | null = null;
-  const timer = setInterval(() => {
+  setInterval(() => {
     void sampleVideo(peer.pc).then((s) => {
       if (!s) return;
       result.framesDecoded = s.framesDecoded;

@@ -1,6 +1,6 @@
 # KR Desk — Validação de stack, arquitetura e plano de etapas
 
-> Status (10/11/2026): Etapas 0–6 concluídas (MVP) · Etapa 7, parte 1 (qualidade adaptativa e área de transferência) em PR. Revisão de ameaças: `docs/SECURITY-REVIEW.md`. Repositório público `kryvon-io/kr-desk` (AGPL-3.0).
+> Status (10/11/2026): Etapas 0–6 concluídas (MVP) · Etapa 7, parte 1 concluída · parte 2 (reconexão e captura WGC) em PR. Revisão de ameaças: `docs/SECURITY-REVIEW.md`. Repositório público `kryvon-io/kr-desk` (AGPL-3.0).
 
 ---
 
@@ -121,6 +121,7 @@ Princípio: tudo que é específico de Windows fica em crates `*-win` atrás de 
 - **Meta de latência:** < 80 ms ponta a ponta em LAN e < 150 ms via internet P2P, medidos no overlay de métricas.
 - **Implementado na Etapa 4 (MVP):** captura DXGI copiada para a CPU (staging) → BGRA→NV12 na CPU, em paralelo (≈2 ms em 1080p; redução bilinear para no máximo 1920×1080) → MFT H.264 de hardware assíncrono, com reserva automática no MFT de software → trilha `TrackLocalStaticSample` (H.264 `42e01f`). Keyframe sob demanda via PLI/FIR (interceptor que entrega o RTCP à aplicação) e pela mensagem `keyframe` do DataChannel; keyframe periódico a cada 10 s; com a tela parada, reenvia 1 quadro/s. O viewer usa `jitterBufferTarget = 0`. Conversão na GPU fica para depois.
 - **Qualidade adaptativa (Etapa 7, parte 1):** o viewer envia `rx_report` a cada 1 s (pacotes recebidos/perdidos no intervalo + RTT). No host, `QualityController` (AIMD): perda > 5% ou RTT acima de 2× a referência + 40 ms → taxa × 0,7; perda > 2% → × 0,9; 3 relatórios limpos → +8% da taxa máxima. Faixa de 0,4 a 8 Mbps; abaixo de 2,5 Mbps cai para 720p e abaixo de 1 Mbps para 540p (com histerese de 30% para subir). O MFT recebe a nova taxa em tempo real (`CODECAPI_AVEncCommonMeanBitRate`); se não aceitar, o encoder é recriado.
+- **Robustez (Etapa 7, parte 2):** se a conexão cair, o viewer reinicia o ICE (nova oferta com `iceRestart`) depois de 2 s em `disconnected` (na hora em `failed`), repetindo a cada 8 s por até 45 s; o host aguarda esse mesmo prazo sem derrubar vídeo nem sessão e segura os candidatos novos até mandar a resposta. Captura: se a DXGI não abrir, `WgcCapture` (Windows.Graphics.Capture, cursor desenhado na imagem); `KR_DESK_CAPTURE=wgc` força esse caminho.
 
 ### 2.5 Entrada remota
 

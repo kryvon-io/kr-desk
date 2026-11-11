@@ -48,7 +48,7 @@ fn is_transient(code: HRESULT) -> bool {
     .contains(&code)
 }
 
-fn map_err(context: &str, err: windows::core::Error) -> CaptureError {
+pub(crate) fn map_err(context: &str, err: windows::core::Error) -> CaptureError {
     let msg = format!("{context}: {err}");
     if is_transient(err.code()) {
         CaptureError::Transient(msg)
@@ -58,7 +58,7 @@ fn map_err(context: &str, err: windows::core::Error) -> CaptureError {
 }
 
 /// Dispositivo D3D11 e duplicação de um monitor.
-struct Session {
+pub(crate) struct Session {
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     duplication: IDXGIOutputDuplication,
@@ -69,7 +69,8 @@ struct Session {
 impl Session {
     /// Lista os monitores ligados à área de trabalho: o principal primeiro,
     /// depois da esquerda para a direita.
-    fn enumerate() -> Result<Vec<(IDXGIAdapter1, IDXGIOutput1, MonitorInfo)>, CaptureError> {
+    pub(crate) fn enumerate()
+    -> Result<Vec<(IDXGIAdapter1, IDXGIOutput1, MonitorInfo)>, CaptureError> {
         let mut found = Vec::new();
         // SAFETY: chamadas COM/DXGI comuns; os objetos retornados são
         // gerenciados pelos wrappers do `windows` (Release no Drop).

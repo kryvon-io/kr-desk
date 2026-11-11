@@ -36,6 +36,9 @@ pub struct SignalingConfig {
     pub device_name: String,
     pub app_version: String,
     pub heartbeat: Duration,
+    /// Sem nada do servidor por esse tempo, a conexão é dada como morta (ex.:
+    /// a rede caiu e voltou e o TCP antigo ficou "zumbi").
+    pub dead_after: Duration,
     pub connect_timeout: Duration,
     pub backoff_min: Duration,
     pub backoff_max: Duration,
@@ -51,7 +54,8 @@ impl SignalingConfig {
             url: url.into(),
             device_name: device_name.into(),
             app_version: app_version.into(),
-            heartbeat: Duration::from_secs(20),
+            heartbeat: Duration::from_secs(10),
+            dead_after: Duration::from_secs(25),
             connect_timeout: Duration::from_secs(10),
             backoff_min: Duration::from_secs(1),
             backoff_max: Duration::from_secs(30),
@@ -93,6 +97,18 @@ pub enum SignalingError {
 
 enum Command {
     Send(ClientMessage),
+    /// Abrir uma conexão nova já (rede mudou; a atual pode estar morta).
+    Reconnect,
+    Shutdown,
+}
+
+/// Uma conexão mais nova que isso não é refeita por [`SignalingHandle::reconnect`].
+const RECONNECT_MIN_AGE: Duration = Duration::from_secs(5);
+
+/// Resultado da espera entre tentativas.
+enum Waited {
+    Elapsed,
+    Reconnect,
     Shutdown,
 }
 
@@ -121,6 +137,12 @@ impl SignalingHandle {
 
     pub fn shutdown(&self) {
         let _ = self.tx.send(Command::Shutdown);
+    }
+
+    /// Reconecta agora: abre uma conexão nova (se a atual tiver mais de 5 s)
+    /// ou encurta a espera da próxima tentativa. Use quando a rede mudar.
+    pub fn reconnect(&self) {
+        let _ = self.tx.send(Command::Reconnect);
     }
 }
 
@@ -197,8 +219,10 @@ impl Client {
                         reason: err.to_string(),
                         retry_in_ms: delay.as_millis() as u64,
                     });
-                    if self.wait_or_shutdown(&mut cmd_rx, delay).await {
-                        return;
+                    match self.wait(&mut cmd_rx, delay).await {
+                        Waited::Shutdown => return,
+                        Waited::Reconnect => attempt = 0,
+                        Waited::Elapsed => {}
                     }
                     continue;
                 }
@@ -211,6 +235,10 @@ impl Client {
 
             match self.serve(conn, &mut cmd_rx).await {
                 Ended::Shutdown => return,
+                Ended::Restart => {
+                    info!("reconexão pedida; abrindo conexão nova");
+                    self.online.store(false, Ordering::SeqCst);
+                }
                 Ended::Lost(reason) => {
                     let delay = self.config.backoff_min;
                     warn!(%reason, "conexão com a sinalização perdida");
@@ -218,7 +246,7 @@ impl Client {
                         reason,
                         retry_in_ms: delay.as_millis() as u64,
                     });
-                    if self.wait_or_shutdown(&mut cmd_rx, delay).await {
+                    if let Waited::Shutdown = self.wait(&mut cmd_rx, delay).await {
                         return;
                     }
                 }
@@ -226,20 +254,17 @@ impl Client {
         }
     }
 
-    /// Espera `delay`; retorna true se pediram para encerrar nesse meio-tempo.
+    /// Espera `delay`, ou menos se pedirem reconexão ou encerramento.
     /// Mensagens enviadas enquanto offline são descartadas (`send` já falha).
-    async fn wait_or_shutdown(
-        &self,
-        cmd_rx: &mut mpsc::UnboundedReceiver<Command>,
-        delay: Duration,
-    ) -> bool {
+    async fn wait(&self, cmd_rx: &mut mpsc::UnboundedReceiver<Command>, delay: Duration) -> Waited {
         let sleep = tokio::time::sleep(delay);
         tokio::pin!(sleep);
         loop {
             tokio::select! {
-                _ = &mut sleep => return false,
+                _ = &mut sleep => return Waited::Elapsed,
                 cmd = cmd_rx.recv() => match cmd {
-                    None | Some(Command::Shutdown) => return true,
+                    None | Some(Command::Shutdown) => return Waited::Shutdown,
+                    Some(Command::Reconnect) => return Waited::Reconnect,
                     Some(Command::Send(_)) => {}
                 },
             }
@@ -252,6 +277,9 @@ impl Client {
         cmd_rx: &mut mpsc::UnboundedReceiver<Command>,
     ) -> Ended {
         let mut next: Option<Pending> = None;
+        let connected_at = tokio::time::Instant::now();
+        // Última vez que algo chegou do servidor (pong, mensagens...).
+        let mut last_rx = tokio::time::Instant::now();
         let mut heartbeat = tokio::time::interval(self.config.heartbeat);
         heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         heartbeat.tick().await; // o primeiro tick é imediato
@@ -269,8 +297,21 @@ impl Client {
                             return Ended::Lost(format!("falha ao enviar: {err}"));
                         }
                     }
+                    Some(Command::Reconnect) => {
+                        if connected_at.elapsed() >= RECONNECT_MIN_AGE {
+                            let mut sink = current.sink;
+                            tokio::spawn(async move {
+                                let _ = sink.close().await;
+                            });
+                            return Ended::Restart;
+                        }
+                    }
                 },
-                msg = recv(&mut current.stream) => match msg {
+                msg = recv(&mut current.stream) => {
+                    if msg.is_ok() {
+                        last_rx = tokio::time::Instant::now();
+                    }
+                    match msg {
                     Ok(ServerMessage::ReconnectSoon { in_ms }) => {
                         debug!(in_ms, "servidor pediu rotação; abrindo nova conexão");
                         if next.is_none() {
@@ -286,6 +327,7 @@ impl Client {
                             match pending.await {
                                 Ok(new) => {
                                     current = self.swap_in(current, new);
+                                    last_rx = tokio::time::Instant::now();
                                     continue;
                                 }
                                 Err(e) => return Ended::Lost(format!("{err}; rotação falhou: {e}")),
@@ -293,7 +335,7 @@ impl Client {
                         }
                         return Ended::Lost(err.to_string());
                     }
-                },
+                }},
                 res = async { next.as_mut().expect("guardado pelo if").as_mut().await }, if next.is_some() => {
                     next = None;
                     match res {
@@ -303,6 +345,9 @@ impl Client {
                     }
                 },
                 _ = heartbeat.tick() => {
+                    if last_rx.elapsed() >= self.config.dead_after {
+                        return Ended::Lost("o servidor parou de responder".into());
+                    }
                     let nonce = self.ping_nonce.fetch_add(1, Ordering::Relaxed);
                     if let Err(err) = send(&mut current.sink, &ClientMessage::Ping { nonce }).await {
                         return Ended::Lost(format!("falha no heartbeat: {err}"));
@@ -330,6 +375,8 @@ impl Client {
 
 enum Ended {
     Shutdown,
+    /// Reconexão pedida pelo app (sem espera).
+    Restart,
     Lost(String),
 }
 

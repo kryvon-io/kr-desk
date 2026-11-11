@@ -24,6 +24,8 @@ enum Seen {
 enum Action {
     Send(ServerMessage),
     Drop,
+    /// Para de responder sem fechar o TCP (conexão "zumbi").
+    Mute,
 }
 
 struct MockServer {
@@ -60,9 +62,11 @@ impl MockServer {
                     }))
                     .await
                     .unwrap();
+                    let mut muted = false;
                     loop {
                         tokio::select! {
                             frame = stream.next() => match frame {
+                                Some(Ok(Message::Text(_))) if muted => {}
                                 Some(Ok(Message::Text(t))) => {
                                     let env: Envelope<ClientMessage> = serde_json::from_str(&t).unwrap();
                                     match env.msg {
@@ -82,6 +86,7 @@ impl MockServer {
                             },
                             act = act_rx.recv() => match act {
                                 Some(Action::Send(m)) => { let _ = sink.send(out(m)).await; }
+                                Some(Action::Mute) => muted = true,
                                 Some(Action::Drop) | None => { let _ = sink.close().await; let _ = seen_tx.send(Seen::Closed(id)); break; }
                             },
                         }
@@ -114,6 +119,7 @@ impl MockServer {
 fn config(url: &str) -> SignalingConfig {
     let mut c = SignalingConfig::new(url, "PC de teste", "0.0.0-test");
     c.heartbeat = Duration::from_millis(200);
+    c.dead_after = Duration::from_millis(700);
     c.backoff_min = Duration::from_millis(50);
     c.backoff_max = Duration::from_millis(200);
     c
@@ -262,6 +268,57 @@ async fn rotacao_abre_nova_conexao_antes_de_fechar_a_antiga() {
             "não deveria ficar offline na rotação: {ev:?}"
         );
     }
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn detecta_conexao_zumbi_e_reconecta() {
+    let mut server = MockServer::start().await;
+    let (handle, mut events) = spawn(
+        config(&server.url),
+        Arc::new(DeviceIdentity::generate().unwrap()),
+    );
+    next_event(&mut events, is_online).await;
+    // O servidor some sem fechar o TCP (rede caiu e voltou).
+    server.act(0, Action::Mute).await;
+    next_event(&mut events, |e| {
+        matches!(e, SignalingEvent::Status(ConnectionStatus::Offline { reason, .. }) if reason.contains("parou de responder"))
+    })
+    .await;
+    server
+        .expect("reconexão", |s| matches!(s, Seen::Auth { conn: 1, .. }))
+        .await;
+    next_event(&mut events, is_online).await;
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn reconexao_pedida_abre_conexao_nova() {
+    let mut server = MockServer::start().await;
+    let mut cfg = config(&server.url);
+    cfg.dead_after = Duration::from_secs(60);
+    let (handle, mut events) = spawn(cfg, Arc::new(DeviceIdentity::generate().unwrap()));
+    next_event(&mut events, is_online).await;
+    // Conexão recente: o pedido é ignorado (evita rajadas).
+    handle.reconnect();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Depois de 5 s, o pedido troca a conexão.
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    handle.reconnect();
+    // A antiga fecha e a nova autentica (em qualquer ordem).
+    let (mut closed, mut auth) = (false, false);
+    while !(closed && auth) {
+        match server
+            .expect("troca de conexão", |s| {
+                matches!(s, Seen::Closed(0) | Seen::Auth { conn: 1, .. })
+            })
+            .await
+        {
+            Seen::Closed(0) => closed = true,
+            _ => auth = true,
+        }
+    }
+    next_event(&mut events, is_online).await;
     handle.shutdown();
 }
 

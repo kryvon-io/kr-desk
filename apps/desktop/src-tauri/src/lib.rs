@@ -75,6 +75,7 @@ pub fn run() {
             commands::set_session_control,
             commands::set_viewer_clipboard,
             commands::write_clipboard,
+            commands::signaling_reconnect,
         ])
         .run(tauri::generate_context!())
         .expect("falha ao iniciar o KR Desk");

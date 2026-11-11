@@ -81,9 +81,9 @@ const PING_INTERVAL_MS = 1000;
 /** Espera após "disconnected" antes de reiniciar o ICE (quedas curtas voltam sozinhas). */
 const RESTART_AFTER_MS = 2000;
 /** Intervalo entre tentativas de reinício de ICE. */
-const RESTART_RETRY_MS = 8000;
+const RESTART_RETRY_MS = 5000;
 /** Desiste da reconexão depois disso (igual ao prazo do host). */
-const RECONNECT_GIVE_UP_MS = 45_000;
+const RECONNECT_GIVE_UP_MS = 60_000;
 
 /** Intervalo dos relatórios de recepção (qualidade adaptativa). */
 const RX_REPORT_MS = 1000;

@@ -32,7 +32,7 @@ const MAX_BITRATE: u32 = 8_000_000;
 
 /// Tempo para a conexão voltar (reinício de ICE pelo viewer) antes de
 /// encerrar a sessão.
-const RECONNECT_GRACE: Duration = Duration::from_secs(45);
+const RECONNECT_GRACE: Duration = Duration::from_secs(60);
 
 /// Prazo para o viewer provar sua identidade depois que o canal abre.
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -287,6 +287,9 @@ impl P2pManager {
                             PeerState::Disconnected | PeerState::Failed => {
                                 if reconnect_deadline.is_none() {
                                     info!(%request_id, ?s, "conexão caiu; aguardando reconexão");
+                                    // A conexão com a sinalização pode ter morrido junto
+                                    // (rede caiu): abre uma nova para receber a oferta.
+                                    signaling.reconnect();
                                     reconnect_deadline =
                                         Some(tokio::time::Instant::now() + RECONNECT_GRACE);
                                 }

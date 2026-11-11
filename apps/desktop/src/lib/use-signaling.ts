@@ -106,12 +106,18 @@ export function useSignaling() {
         iceServers,
         {
           onSignal: (payload) => {
-            invoke("send_signal", { requestId, payload }).catch((err: unknown) =>
-              console.warn("falha ao enviar sinal", err),
-            );
+            invoke("send_signal", { requestId, payload }).catch((err: unknown) => {
+              console.warn("falha ao enviar sinal", err);
+              // Sem sinalização: tenta reconectar já (a oferta é reenviada depois).
+              invoke("signaling_reconnect").catch(() => undefined);
+            });
           },
           onState: (s) => {
             update({ state: s });
+            if (s === "reconnecting") {
+              // A conexão com o servidor pode ter morrido junto com a rede.
+              invoke("signaling_reconnect").catch(() => undefined);
+            }
             if (s === "failed" && peer.isAuthenticated) {
               // A reconexão desistiu: encerra a sessão dos dois lados.
               invoke("end_session", { requestId }).catch(() => undefined);

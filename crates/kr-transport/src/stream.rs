@@ -11,7 +11,7 @@ use kr_core::media::{
     PipelineStats, SharedArea, SourceEvent, SourceFactory, run_pipeline,
 };
 use tokio::sync::mpsc;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use kr_proto::control::{ControlMessage, CursorImage, MonitorDto};
 
@@ -99,12 +99,25 @@ impl VideoStream {
 
         let writer_control = control.clone();
         tokio::spawn(async move {
+            // Durante uma queda de rede (antes do reinício de ICE) o envio pode
+            // falhar: seguimos tentando e, quando voltar, pedimos um keyframe.
+            let mut failing = 0u32;
             while let Some(frame) = rx.recv().await {
                 let data = Bytes::from(frame.data);
-                if let Err(err) = video.write(data, frame.duration, frame.captured_at).await {
-                    warn!(%err, "falha ao enviar quadro; encerrando o vídeo");
-                    writer_control.stop();
-                    break;
+                match video.write(data, frame.duration, frame.captured_at).await {
+                    Ok(()) => {
+                        if failing > 0 {
+                            info!(failing, "envio de vídeo voltou");
+                            writer_control.request_keyframe();
+                            failing = 0;
+                        }
+                    }
+                    Err(err) => {
+                        if failing == 0 {
+                            warn!(%err, "falha ao enviar quadro; tentando de novo");
+                        }
+                        failing += 1;
+                    }
                 }
             }
         });

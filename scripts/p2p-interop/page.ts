@@ -25,6 +25,7 @@ interface InteropResult {
   auth?: string;
   clipboard?: string;
   rxReports?: number;
+  reconnected?: boolean;
   code?: string;
   error?: string;
 }
@@ -129,7 +130,7 @@ ws.onopen = async () => {
   peer.start().catch((err: unknown) => (result.error = String(err)));
 
   let switchRequested: number | null = null;
-  const timer = setInterval(() => {
+  setInterval(() => {
     void sampleVideo(peer.pc).then((s) => {
       if (!s) return;
       result.framesDecoded = s.framesDecoded;
@@ -151,7 +152,7 @@ ws.onopen = async () => {
       } else if (switchRequested !== null && result.resolution === "320x240" && !result.ok) {
         result.switchedTo = result.resolution;
         result.ok = true;
-        clearInterval(timer);
+        // As estatísticas continuam (o teste de reconexão usa framesDecoded).
         sendInputAndFinish(peer);
       }
     });
@@ -167,6 +168,14 @@ function sendInputAndFinish(peer: ViewerPeer) {
   peer.sendInput({ t: "key", code: 0x1e, ext: false, down: true });
   peer.sendInput({ t: "key", code: 0x1e, ext: false, down: false });
   peer.sendClipboard("olá do viewer ç");
-  // Dá tempo de o canal não confiável entregar antes de encerrar.
-  setTimeout(() => ws.send("done"), 500);
+  // Reinício de ICE: a conexão tem de voltar e o vídeo continuar chegando.
+  const before = result.framesDecoded ?? 0;
+  peer.reconnectNow();
+  const wait = setInterval(() => {
+    if (result.state === "connected" && (result.framesDecoded ?? 0) >= before + 10) {
+      clearInterval(wait);
+      result.reconnected = true;
+      ws.send("done");
+    }
+  }, 250);
 }

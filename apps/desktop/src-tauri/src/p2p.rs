@@ -30,6 +30,10 @@ const VIDEO_CHECK: Duration = Duration::from_secs(2);
 const MIN_BITRATE: u32 = 400_000;
 const MAX_BITRATE: u32 = 8_000_000;
 
+/// Tempo para a conexão voltar (reinício de ICE pelo viewer) antes de
+/// encerrar a sessão.
+const RECONNECT_GRACE: Duration = Duration::from_secs(180);
+
 /// Prazo para o viewer provar sua identidade depois que o canal abre.
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -172,6 +176,7 @@ impl P2pManager {
             let mut input: Option<kr_core::input::InputController<crate::remote_input::HostSink>> =
                 None;
             let mut auth_deadline: Option<tokio::time::Instant> = None;
+            let mut reconnect_deadline: Option<tokio::time::Instant> = None;
             let mut quality = QualityController::new(
                 kr_core::media::PipelineConfig::default().bitrate_bps,
                 MIN_BITRATE,
@@ -233,6 +238,16 @@ impl P2pManager {
                         continue;
                     }
                     _ = check.tick() => {
+                        if reconnect_deadline.is_some_and(|d| tokio::time::Instant::now() >= d) {
+                            warn!(%request_id, "conexão não voltou; encerrando a sessão");
+                            let _ = signaling.send(ClientMessage::EndSession {
+                                request_id: request_id.clone(),
+                            });
+                            status.state = PeerState::Failed;
+                            status.sharing = false;
+                            emit(&app, status.clone());
+                            break;
+                        }
                         if !status.authenticated
                             && status.security_error.is_none()
                             && auth_deadline.is_some_and(|d| tokio::time::Instant::now() >= d)
@@ -267,7 +282,32 @@ impl P2pManager {
                             Some(verification_code(&request_id, &local, &remote));
                         fingerprints = Some((local, remote));
                     }
-                    PeerEvent::State(s) => status.state = s,
+                    PeerEvent::State(s) => {
+                        match s {
+                            PeerState::Disconnected | PeerState::Failed => {
+                                if reconnect_deadline.is_none() {
+                                    info!(%request_id, ?s, "conexão caiu; aguardando reconexão");
+                                    // A conexão com a sinalização pode ter morrido junto
+                                    // (rede caiu): abre uma nova para receber a oferta.
+                                    signaling.reconnect();
+                                    reconnect_deadline =
+                                        Some(tokio::time::Instant::now() + RECONNECT_GRACE);
+                                }
+                                // Nada fica pressionado enquanto a rede está fora.
+                                if let Some(c) = input.as_mut() {
+                                    c.release_all();
+                                }
+                            }
+                            PeerState::Connected if reconnect_deadline.take().is_some() => {
+                                info!(%request_id, "conexão restabelecida");
+                                if let Some(v) = &video {
+                                    v.request_keyframe();
+                                }
+                            }
+                            _ => {}
+                        }
+                        status.state = s;
+                    }
                     PeerEvent::ControlOpen => {
                         status.state = PeerState::Connected;
                         // Prova a nossa identidade; vídeo e entrada só depois de
@@ -393,7 +433,7 @@ impl P2pManager {
                         continue;
                     }
                 }
-                if matches!(status.state, PeerState::Closed | PeerState::Failed) {
+                if status.state == PeerState::Closed {
                     video = None;
                     input = None;
                     clipboard = None;

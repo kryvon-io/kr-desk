@@ -106,11 +106,23 @@ export function useSignaling() {
         iceServers,
         {
           onSignal: (payload) => {
-            invoke("send_signal", { requestId, payload }).catch((err: unknown) =>
-              console.warn("falha ao enviar sinal", err),
-            );
+            invoke("send_signal", { requestId, payload }).catch((err: unknown) => {
+              console.warn("falha ao enviar sinal", err);
+              // Sem sinalização: tenta reconectar já (a oferta é reenviada depois).
+              invoke("signaling_reconnect").catch(() => undefined);
+            });
           },
-          onState: (s) => update({ state: s }),
+          onState: (s) => {
+            update({ state: s });
+            if (s === "reconnecting") {
+              // A conexão com o servidor pode ter morrido junto com a rede.
+              invoke("signaling_reconnect").catch(() => undefined);
+            }
+            if (s === "failed" && peer.isAuthenticated) {
+              // A reconexão desistiu: encerra a sessão dos dois lados.
+              invoke("end_session", { requestId }).catch(() => undefined);
+            }
+          },
           onRtt: (ms) => update({ rttMs: ms }),
           onRoute: (route) => update({ route }),
           onVideo: (stream) => {
@@ -188,9 +200,11 @@ export function useSignaling() {
 
     void (async () => {
       unlisten.push(
-        await listen<ConnectionStatus>("signaling-status", (e) =>
-          dispatch({ type: "status", status: e.payload }),
-        ),
+        await listen<ConnectionStatus>("signaling-status", (e) => {
+          // Sinalização de volta: a sessão em reconexão reenvia a oferta já.
+          if (e.payload.state === "online") viewer.current?.peer.signalingOnline();
+          dispatch({ type: "status", status: e.payload });
+        }),
         await listen<ServerMessage>("signaling-message", (e) => onMessage(e.payload)),
         await listen<HostP2pStatus>("p2p-status", (e) =>
           dispatch({

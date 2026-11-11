@@ -39,17 +39,22 @@ export function VerificationLine({ p2p }: { p2p: P2pStatus }) {
 /** Descrição curta da conexão ponto a ponto. */
 function P2pLine({ p2p }: { p2p: P2pStatus }) {
   const rtt = p2p.rttMs !== null ? ` · ${p2p.rttMs} ms` : "";
+  // Já conectado antes: uma queda vira tentativa de reconexão (até 45 s).
+  const recovering =
+    p2p.state === "disconnected" ||
+    p2p.state === "reconnecting" ||
+    (p2p.state === "failed" && p2p.authenticated);
+  if (recovering) {
+    return (
+      <span className="flex items-center gap-1.5 text-amber-500">
+        <Loader2 className="size-3.5 animate-spin" /> Conexão perdida, reconectando…
+      </span>
+    );
+  }
   if (p2p.state === "failed") {
     return (
       <span className="flex items-center gap-1.5 text-destructive">
         <TriangleAlert className="size-3.5" /> Não foi possível conectar os dois computadores
-      </span>
-    );
-  }
-  if (p2p.state === "disconnected") {
-    return (
-      <span className="flex items-center gap-1.5 text-amber-500">
-        <Loader2 className="size-3.5 animate-spin" /> Conexão instável, tentando recuperar…
       </span>
     );
   }

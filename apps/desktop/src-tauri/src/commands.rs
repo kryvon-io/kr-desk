@@ -248,3 +248,9 @@ pub fn write_clipboard(text: String, clipboard: State<'_, crate::remote_input::V
         clipboard.set_remote(&text);
     }
 }
+
+/// Abre uma conexão nova com a sinalização (rede mudou durante uma sessão).
+#[tauri::command]
+pub fn signaling_reconnect(bridge: State<'_, Bridge>) {
+    bridge.handle.reconnect();
+}

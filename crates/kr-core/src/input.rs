@@ -15,6 +15,10 @@ pub trait InputSink {
     fn wheel(&mut self, dx: i32, dy: i32);
     /// Tecla por scancode (conjunto 1); `ext` = tecla estendida (prefixo E0).
     fn key(&mut self, code: u16, ext: bool, down: bool);
+    /// Ctrl+Alt+Del (só funciona com o serviço do KR Desk instalado).
+    fn secure_attention(&mut self) {
+        tracing::info!("Ctrl+Alt+Del ignorado: serviço do KR Desk não disponível");
+    }
 }
 
 /// Maior scancode aceito (conjunto 1 vai até 0x7F; deixamos folga).
@@ -76,6 +80,11 @@ impl<S: InputSink> InputController<S> {
                 }
             }
             ControlMessage::ReleaseAll => self.release_all(),
+            ControlMessage::CtrlAltDel => {
+                // As teclas do atalho não podem ficar presas do lado de cá.
+                self.release_all();
+                self.sink.secure_attention();
+            }
             _ => return false,
         }
         true

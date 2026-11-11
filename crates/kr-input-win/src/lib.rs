@@ -9,9 +9,9 @@
 //!   Alt+Tab e Alt+F4 — e as entrega ao app em vez de ao Windows local.
 //! - [`ClipboardSync`] (ambos): texto copiado de um lado aparece no outro.
 //!
-//! Limitações conhecidas: janelas elevadas (administrador) ignoram a entrada
-//! por causa do UIPI, e Ctrl+Alt+Del não pode ser enviado; ambos ficam para o
-//! serviço da Etapa 8.
+//! Rodando no app, janelas elevadas (administrador) ignoram a entrada por
+//! causa do UIPI. Com o serviço do KR Desk, o agente SYSTEM (`kr-service-win`)
+//! usa este mesmo [`SendInputSink`] sem essa limitação.
 
 #[cfg(windows)]
 mod clipboard;

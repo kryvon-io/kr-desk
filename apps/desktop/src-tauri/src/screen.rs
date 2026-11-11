@@ -1,8 +1,9 @@
 //! Transmissão da tela deste computador (lado host).
 //!
-//! No Windows: DXGI Desktop Duplication (ou Windows.Graphics.Capture, se a
-//! DXGI não abrir) + H.264 do Media Foundation (hardware, com reserva em
-//! software). Em outras plataformas o app compila
+//! No Windows: a captura vem do agente do serviço (SYSTEM, vê UAC e tela de
+//! bloqueio) quando ele está instalado; sem ele, DXGI Desktop Duplication
+//! (ou Windows.Graphics.Capture, se a DXGI não abrir) neste processo. Depois,
+//! H.264 do Media Foundation (hardware, com reserva em software). Em outras plataformas o app compila
 //! (para desenvolvimento), mas não transmite vídeo.
 
 use kr_transport::{ControlSender, VideoSender, VideoStream};
@@ -11,15 +12,17 @@ use kr_transport::{ControlSender, VideoSender, VideoStream};
 /// `KR_DESK_ENCODER=software`.
 pub const ENV_ENCODER: &str = "KR_DESK_ENCODER";
 
-/// Variável de ambiente para forçar a captura WGC (diagnóstico):
-/// `KR_DESK_CAPTURE=wgc`.
+/// Variável de ambiente para escolher a captura (diagnóstico):
+/// `KR_DESK_CAPTURE=wgc` (WGC neste processo) ou `local` (sem o serviço).
 pub const ENV_CAPTURE: &str = "KR_DESK_CAPTURE";
 
 #[cfg(windows)]
 #[derive(Clone, Copy)]
 enum CapturePreference {
-    /// DXGI; se não abrir, WGC.
+    /// Agente do serviço; sem ele, DXGI; se não abrir, WGC.
     Auto,
+    /// DXGI (ou WGC) neste processo, sem o serviço.
+    Local,
     Wgc,
 }
 
@@ -30,6 +33,15 @@ fn open_capture(
 ) -> Result<Box<dyn kr_core::media::FrameSource>, kr_core::media::CaptureError> {
     use kr_capture_win::{DxgiCapture, WgcCapture};
     if let CapturePreference::Auto = preference {
+        match kr_core::agent::AgentSource::connect(Box::new(kr_service_win::connect_agent)) {
+            Ok(c) => {
+                tracing::info!("captura pelo serviço do KR Desk (UAC e tela de bloqueio)");
+                return Ok(Box::new(c));
+            }
+            Err(err) => tracing::info!(%err, "serviço indisponível; capturando neste processo"),
+        }
+    }
+    if let CapturePreference::Auto | CapturePreference::Local = preference {
         match DxgiCapture::primary() {
             Ok(c) => return Ok(Box::new(c)),
             Err(err) => {
@@ -48,6 +60,7 @@ pub fn start(video: VideoSender, cursor: ControlSender) -> Result<VideoStream, S
 
     let capture = match std::env::var(ENV_CAPTURE).as_deref() {
         Ok("wgc") => CapturePreference::Wgc,
+        Ok("local") => CapturePreference::Local,
         _ => CapturePreference::Auto,
     };
     let preference = match std::env::var(ENV_ENCODER).as_deref() {

@@ -11,6 +11,7 @@
   { "t": "key", "code": 30, "ext": false, "down": true },
   { "t": "key", "code": 75, "ext": true, "down": false },
   { "t": "release_all" },
+  { "t": "ctrl_alt_del" },
   { "t": "cursor_shape", "w": 1, "h": 1, "hx": 0, "hy": 0, "rgba": "AAAA/w==" },
   { "t": "cursor_visible", "visible": false },
   {

@@ -25,8 +25,44 @@ pub fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
+/// Modos do executável usados pelo serviço e pelo instalador
+/// (`--service`, `--agent`, `--install-service`, `--stop-service`,
+/// `--uninstall-service`). Devolve o código de saída, ou `None` para abrir o
+/// app normalmente.
+#[cfg(windows)]
+fn service_mode() -> Option<i32> {
+    let arg = std::env::args().nth(1)?;
+    let (file, action): (&str, fn() -> std::io::Result<()>) = match arg.as_str() {
+        "--service" => ("service.log", kr_service_win::run_service),
+        "--agent" => ("agent.log", kr_service_win::run_agent),
+        "--install-service" => ("install.log", kr_service_win::install_service),
+        "--stop-service" => ("install.log", kr_service_win::stop_service),
+        "--uninstall-service" => ("install.log", kr_service_win::uninstall_service),
+        _ => return None,
+    };
+    // Pasta de instalação (Arquivos de Programas): só administradores escrevem,
+    // então um usuário comum não consegue redirecionar o log do SYSTEM.
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("logs")))
+    {
+        logging::init(&dir, file);
+    }
+    match action() {
+        Ok(()) => Some(0),
+        Err(err) => {
+            tracing::error!(%err, mode = %arg, "falha");
+            Some(1)
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    if let Some(code) = service_mode() {
+        std::process::exit(code);
+    }
     tauri::Builder::default()
         // Precisa ser o primeiro plugin: uma segunda execução só traz a janela à frente.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -34,7 +70,7 @@ pub fn run() {
         }))
         .setup(|app| {
             let data_dir = app.path().app_local_data_dir()?;
-            logging::init(&data_dir.join("logs"));
+            logging::init(&data_dir.join("logs"), "kr-desk.log");
             tracing::info!(version = env!("CARGO_PKG_VERSION"), "KR Desk iniciando");
             let identity = Arc::new(DeviceIdentity::load_or_create(&data_dir, &SystemProtector)?);
             tracing::info!(public_key = %identity.public_key_b64(), "identidade carregada");

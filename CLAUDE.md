@@ -8,7 +8,7 @@
 ## Ambiente remoto (Linux)
 
 - O rustup não consegue baixar toolchains aqui: use `RUSTUP_TOOLCHAIN=stable` ao rodar cargo localmente.
-- Código `cfg(windows)` pode ser checado aqui (tipos/assinaturas Win32, sem gerar binário): `RUSTUP_TOOLCHAIN=stable scripts/check-windows-on-linux.sh -p kr-capture-win -p kr-codec-win -p kr-input-win -p kr-identity -p kr-desk --all-targets`. APIs do Tauri que só existem no Windows (ex.: `hwnd()`) não aparecem nessa checagem — prefira não depender delas.
+- Código `cfg(windows)` pode ser checado aqui (tipos/assinaturas Win32, sem gerar binário): `RUSTUP_TOOLCHAIN=stable scripts/check-windows-on-linux.sh -p kr-capture-win -p kr-codec-win -p kr-input-win -p kr-service-win -p kr-identity -p kr-desk --all-targets`. APIs do Tauri que só existem no Windows (ex.: `hwnd()`) não aparecem nessa checagem — prefira não depender delas.
 - `kr-codec-soft` (OpenH264) é só para testes no Linux; o app usa Media Foundation (`kr-codec-win`).
 - Para compilar o crate Tauri (`kr-desk`) no Linux, instale antes: `apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev`. Código `cfg(windows)` (DPAPI, crates `*-win`) só compila no CI Windows.
 - Teste do cliente Rust contra o servidor real: suba `PORT=3100 pnpm --filter @kr-desk/server start` e rode `KR_SIGNALING_URL=ws://127.0.0.1:3100/ws cargo test -p kr-signaling -- --include-ignored`.

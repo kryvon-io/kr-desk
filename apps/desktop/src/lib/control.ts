@@ -50,7 +50,8 @@ export type InputMessage =
   | { t: "mouse_button"; button: MouseButton; down: boolean; x: number; y: number }
   | { t: "wheel"; dx: number; dy: number }
   | { t: "key"; code: number; ext: boolean; down: boolean }
-  | { t: "release_all" };
+  | { t: "release_all" }
+  | { t: "ctrl_alt_del" };
 
 const CANDIDATE_TYPES: readonly string[] = ["host", "srflx", "prflx", "relay"];
 

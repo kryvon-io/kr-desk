@@ -1,11 +1,16 @@
 //! Comandos chamados pela interface (`invoke`).
+//!
+//! Com o serviço instalado, o que é do host (responder pedidos, encerrar ou
+//! mudar a permissão das sessões dele) vai para o serviço; o resto (acessar
+//! outros computadores) fica no backend deste processo.
 
 use kr_core::AppInfo;
-use kr_proto::ClientMessage;
+use kr_host::StatusDto;
+use kr_host::ui::UiCommand;
 use serde::Serialize;
 use tauri::State;
 
-use crate::signaling::{Bridge, StatusDto};
+use crate::backend::AppState;
 
 /// Versão do app e do protocolo.
 #[tauri::command]
@@ -18,48 +23,34 @@ pub fn app_info() -> AppInfo {
 pub struct SignalingStatus {
     pub status: StatusDto,
     pub device_name: String,
+    /// O serviço do KR Desk é o host deste computador.
+    pub service: bool,
 }
 
 /// Estado atual (a interface também recebe atualizações pelo evento `signaling-status`).
 #[tauri::command]
-pub fn signaling_status(bridge: State<'_, Bridge>) -> SignalingStatus {
-    SignalingStatus {
-        status: bridge.status.lock().expect("mutex envenenado").clone(),
-        device_name: bridge.device_name.clone(),
+pub fn signaling_status(state: State<'_, AppState>) -> SignalingStatus {
+    match &state.service {
+        Some(link) => {
+            let (status, device_name) = link.status();
+            SignalingStatus {
+                status,
+                device_name,
+                service: true,
+            }
+        }
+        None => SignalingStatus {
+            status: state.local.status(),
+            device_name: state.local.device_name().to_owned(),
+            service: false,
+        },
     }
-}
-
-/// Normaliza o ID digitado ("123 456 789" → "123456789") e valida.
-fn normalize_id(raw: &str) -> Result<String, String> {
-    let id: String = raw
-        .chars()
-        .filter(|c| !c.is_whitespace() && *c != '-')
-        .collect();
-    let valid = id.len() == 9 && id.chars().all(|c| c.is_ascii_digit()) && !id.starts_with('0');
-    if valid {
-        Ok(id)
-    } else {
-        Err("O ID deve ter 9 dígitos.".into())
-    }
-}
-
-fn is_request_id(s: &str) -> bool {
-    uuid::Uuid::parse_str(s).is_ok()
 }
 
 /// Pede acesso a outro dispositivo. Retorna o `request_id` da sessão.
 #[tauri::command]
-pub fn connect_to(target_id: String, bridge: State<'_, Bridge>) -> Result<String, String> {
-    let target_id = normalize_id(&target_id)?;
-    let request_id = uuid::Uuid::new_v4().to_string();
-    bridge
-        .handle
-        .send(ClientMessage::ConnectRequest {
-            request_id: request_id.clone(),
-            target_id,
-        })
-        .map_err(|e| e.to_string())?;
-    Ok(request_id)
+pub fn connect_to(target_id: String, state: State<'_, AppState>) -> Result<String, String> {
+    state.local.connect_to(&target_id)
 }
 
 /// Responde a um pedido recebido (host).
@@ -68,33 +59,30 @@ pub fn respond_request(
     request_id: String,
     accept: bool,
     allow_control: Option<bool>,
-    bridge: State<'_, Bridge>,
+    state: State<'_, AppState>,
 ) -> Result<(), String> {
-    if !is_request_id(&request_id) {
-        return Err("Pedido inválido.".into());
+    let allow_control = allow_control.unwrap_or(true);
+    match &state.service {
+        Some(link) => link
+            .call(UiCommand::RespondRequest {
+                request_id,
+                accept,
+                allow_control,
+            })
+            .map(|_| ()),
+        None => state
+            .local
+            .respond_request(&request_id, accept, allow_control),
     }
-    if accept {
-        bridge
-            .p2p
-            .set_pending_control(&request_id, allow_control.unwrap_or(true));
-    }
-    bridge
-        .handle
-        .send(ClientMessage::ConnectResponse { request_id, accept })
-        .map_err(|e| e.to_string())
 }
 
 /// Encerra ou cancela uma sessão/pedido (e a conexão P2P, se houver).
 #[tauri::command]
-pub async fn end_session(request_id: String, bridge: State<'_, Bridge>) -> Result<(), String> {
-    if !is_request_id(&request_id) {
-        return Err("Sessão inválida.".into());
+pub async fn end_session(request_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    if let Some(link) = state.service.as_ref().filter(|l| l.owns(&request_id)) {
+        return link.call(UiCommand::EndSession { request_id }).map(|_| ());
     }
-    bridge.p2p.close(&request_id).await;
-    bridge
-        .handle
-        .send(ClientMessage::EndSession { request_id })
-        .map_err(|e| e.to_string())
+    state.local.end_session(&request_id).await
 }
 
 /// Envia um sinal WebRTC (oferta/candidato) do viewer ao host.
@@ -102,35 +90,9 @@ pub async fn end_session(request_id: String, bridge: State<'_, Bridge>) -> Resul
 pub fn send_signal(
     request_id: String,
     payload: serde_json::Value,
-    bridge: State<'_, Bridge>,
+    state: State<'_, AppState>,
 ) -> Result<(), String> {
-    if !is_request_id(&request_id) {
-        return Err("Sessão inválida.".into());
-    }
-    if !payload.is_object() {
-        return Err("Sinal inválido.".into());
-    }
-    bridge
-        .handle
-        .send(ClientMessage::Signal {
-            request_id,
-            payload,
-        })
-        .map_err(|e| e.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normaliza_ids() {
-        assert_eq!(normalize_id("123 456 789").unwrap(), "123456789");
-        assert_eq!(normalize_id("123-456-789").unwrap(), "123456789");
-        assert!(normalize_id("12345678").is_err());
-        assert!(normalize_id("012345678").is_err());
-        assert!(normalize_id("12345678a").is_err());
-    }
+    state.local.send_signal(&request_id, payload)
 }
 
 /// Liga/desliga a captura nativa do teclado (viewer com a tela remota
@@ -140,12 +102,6 @@ pub fn set_keyboard_capture(enabled: bool, app: tauri::AppHandle) -> bool {
     use tauri::Manager;
     app.try_state::<crate::remote_input::KeyboardCapture>()
         .is_some_and(|c| c.set_enabled(enabled))
-}
-
-/// Chaves usadas na autenticação da sessão (viewer e host).
-pub struct Session {
-    pub identity: std::sync::Arc<kr_identity::DeviceIdentity>,
-    pub known: std::sync::Arc<std::sync::Mutex<kr_identity::KnownPeers>>,
 }
 
 #[derive(Serialize)]
@@ -158,13 +114,13 @@ pub struct SessionProof {
 /// Viewer: assina a mensagem de sessão montada pela interface. Só aceita
 /// mensagens com o contexto de sessão (a chave não assina outras coisas).
 #[tauri::command]
-pub fn sign_session(message: String, session: State<'_, Session>) -> Result<SessionProof, String> {
-    let signature = session
-        .identity
+pub fn sign_session(message: String, state: State<'_, AppState>) -> Result<SessionProof, String> {
+    let identity = state.local.identity();
+    let signature = identity
         .sign_session_message(&message)
         .map_err(|e| e.to_string())?;
     Ok(SessionProof {
-        public_key: session.identity.public_key_b64(),
+        public_key: identity.public_key_b64(),
         signature,
     })
 }
@@ -191,7 +147,7 @@ pub fn verify_session(
     public_key: String,
     signature: String,
     message: String,
-    session: State<'_, Session>,
+    state: State<'_, AppState>,
 ) -> VerifyResult {
     if public_key != expected_public_key {
         return VerifyResult::Failed {
@@ -203,8 +159,9 @@ pub fn verify_session(
             reason: format!("verificação falhou: {err}"),
         };
     }
-    match session
-        .known
+    match state
+        .local
+        .known()
         .lock()
         .expect("mutex")
         .check(&peer_id, &public_key)
@@ -219,15 +176,22 @@ pub fn verify_session(
 /// Esquece a chave memorizada de um computador (o usuário confirmou que ele
 /// foi reinstalado).
 #[tauri::command]
-pub fn forget_peer(peer_id: String, session: State<'_, Session>) {
-    session.known.lock().expect("mutex").forget(&peer_id);
+pub fn forget_peer(peer_id: String, state: State<'_, AppState>) {
+    state.local.known().lock().expect("mutex").forget(&peer_id);
     tracing::info!(%peer_id, "chave memorizada removida");
 }
 
 /// Host: permite ou bloqueia o controle remoto durante a sessão.
 #[tauri::command]
-pub fn set_session_control(request_id: String, allow: bool, bridge: State<'_, Bridge>) -> bool {
-    bridge.p2p.set_control(&request_id, allow)
+pub fn set_session_control(request_id: String, allow: bool, state: State<'_, AppState>) -> bool {
+    match &state.service {
+        Some(link) => link
+            .call(UiCommand::SetSessionControl { request_id, allow })
+            .ok()
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        None => state.local.set_session_control(&request_id, allow),
+    }
 }
 
 /// Viewer: liga/desliga o envio do texto copiado aqui (evento
@@ -251,6 +215,6 @@ pub fn write_clipboard(text: String, clipboard: State<'_, crate::remote_input::V
 
 /// Abre uma conexão nova com a sinalização (rede mudou durante uma sessão).
 #[tauri::command]
-pub fn signaling_reconnect(bridge: State<'_, Bridge>) {
-    bridge.handle.reconnect();
+pub fn signaling_reconnect(state: State<'_, AppState>) {
+    state.local.reconnect();
 }

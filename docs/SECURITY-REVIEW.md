@@ -30,4 +30,5 @@ Estado em 10/11/2026 (versão 0.6.0). Escopo: app desktop (host e viewer), servi
 - Sem o TURN, sessões entre redes com NAT simétrico podem falhar (não é risco de segurança).
 - O código de verificação não é obrigatório: quem não compara fica protegido pelo TOFU a partir da segunda conexão.
 - Binários não assinados: o SmartScreen avisa; distribuir só para testes até a Etapa 9.
+- Serviço (Etapa 8, parte 2a): o pipe do serviço aceita apps de qualquer sessão (troca rápida de usuário), sempre conferindo que o cliente é o executável instalado. A chave do computador fica em `<instalação>\data` (só SYSTEM e administradores), protegida por DPAPI da conta SYSTEM.
 - Serviço (Etapa 8): um malware que já roda como o usuário logado pode injetar código no `kr-desk.exe` e, por ele, usar o agente para clicar em janelas de administrador. É o mesmo risco de outras ferramentas de acesso remoto com serviço; a mitigação plena exige assinatura de código e verificação do chamador além do caminho (Etapa 9).

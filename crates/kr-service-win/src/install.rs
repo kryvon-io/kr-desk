@@ -67,6 +67,22 @@ fn ensure_protected_location(exe: &std::path::Path) -> io::Result<()> {
     }
 }
 
+/// O serviço está instalado? (Qualquer usuário pode consultar.)
+pub fn service_installed() -> bool {
+    use windows::Win32::System::Services::{SC_MANAGER_CONNECT, SERVICE_QUERY_STATUS};
+    let name = wide(SERVICE_NAME);
+    // SAFETY: sem ponteiros além dos nulos e do nome terminado em zero.
+    unsafe {
+        let Ok(scm) = OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_CONNECT) else {
+            return false;
+        };
+        let scm = Sc(scm);
+        OpenServiceW(scm.0, PCWSTR(name.as_ptr()), SERVICE_QUERY_STATUS)
+            .map(Sc)
+            .is_ok()
+    }
+}
+
 /// Cria (ou atualiza) e inicia o serviço apontando para este executável.
 pub fn install_service() -> io::Result<()> {
     let exe = std::env::current_exe()?;

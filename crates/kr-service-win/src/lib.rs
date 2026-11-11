@@ -13,8 +13,9 @@
 //! 3. Ctrl+Alt+Del: o agente pede ao serviço (pela saída padrão), que chama
 //!    `SendSAS`.
 //!
-//! O app usa o agente quando ele existe ([`connect_agent`]); sem o serviço,
-//! continua capturando e injetando por conta própria.
+//! Com o serviço instalado, ele também é o **host** deste computador
+//! (sinalização e sessões P2P, inclusive sem ninguém conectado), e o app vira
+//! a interface dele ([`connect_service`]). Sem o serviço, o app faz tudo.
 //!
 //! Segurança: o pipe só aceita usuários interativos e só conversa com o
 //! próprio `kr-desk.exe` instalado (o caminho do executável dos dois lados
@@ -25,6 +26,8 @@
 mod agent;
 #[cfg(windows)]
 mod desktop;
+#[cfg(windows)]
+mod host;
 #[cfg(windows)]
 mod install;
 #[cfg(windows)]
@@ -37,9 +40,9 @@ mod util;
 #[cfg(windows)]
 pub use agent::run_agent;
 #[cfg(windows)]
-pub use install::{install_service, stop_service, uninstall_service};
+pub use install::{install_service, service_installed, stop_service, uninstall_service};
 #[cfg(windows)]
-pub use pipe::{PipeStream, connect_agent};
+pub use pipe::{PipeStream, connect_agent, connect_service};
 #[cfg(windows)]
 pub use service::run_service;
 

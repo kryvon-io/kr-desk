@@ -2239,7 +2239,7 @@ dependencies = [
 
 [[package]]
 name = "kr-capture-win"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "kr-core",
  "tracing",
@@ -2248,7 +2248,7 @@ dependencies = [
 
 [[package]]
 name = "kr-codec-soft"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "kr-core",
  "openh264",
@@ -2256,7 +2256,7 @@ dependencies = [
 
 [[package]]
 name = "kr-codec-win"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "kr-core",
  "tracing",
@@ -2265,7 +2265,7 @@ dependencies = [
 
 [[package]]
 name = "kr-core"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "kr-proto",
  "serde",
@@ -2276,11 +2276,12 @@ dependencies = [
 
 [[package]]
 name = "kr-desk"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "kr-capture-win",
  "kr-codec-win",
  "kr-core",
+ "kr-host",
  "kr-identity",
  "kr-input-win",
  "kr-proto",
@@ -2300,8 +2301,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "kr-host"
+version = "0.8.1"
+dependencies = [
+ "kr-core",
+ "kr-identity",
+ "kr-proto",
+ "kr-signaling",
+ "kr-transport",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "kr-identity"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek",
@@ -2317,7 +2334,7 @@ dependencies = [
 
 [[package]]
 name = "kr-input-win"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "kr-core",
  "kr-proto",
@@ -2327,7 +2344,7 @@ dependencies = [
 
 [[package]]
 name = "kr-proto"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek",
@@ -2337,19 +2354,25 @@ dependencies = [
 
 [[package]]
 name = "kr-service-win"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "kr-capture-win",
+ "kr-codec-win",
  "kr-core",
+ "kr-host",
+ "kr-identity",
  "kr-input-win",
  "kr-proto",
+ "kr-transport",
+ "serde_json",
+ "tokio",
  "tracing",
  "windows",
 ]
 
 [[package]]
 name = "kr-signaling"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "futures-util",
  "getrandom 0.4.3",
@@ -2365,7 +2388,7 @@ dependencies = [
 
 [[package]]
 name = "kr-transport"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",

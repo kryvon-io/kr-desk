@@ -36,8 +36,20 @@ const PIPE_SDDL: &str = "D:P(A;;GA;;;SY)(A;;0x12018b;;;IU)";
 
 const BUFFER: u32 = 1024 * 1024;
 
-fn pipe_name(session: u32) -> String {
+fn agent_pipe_name(session: u32) -> String {
     format!(r"\\.\pipe\kr-desk-agent-{session}")
+}
+
+/// Pipe do serviço (um só, para os apps de todas as sessões).
+const SERVICE_PIPE: &str = r"\\.\pipe\kr-desk-service";
+
+/// Quem pode se conectar a um servidor de pipe (além de ser o nosso executável).
+#[derive(Clone, Copy)]
+pub(crate) enum Clients {
+    /// Agente: o app desta sessão ou o serviço (sessão 0).
+    SameSessionOrService,
+    /// Serviço: apps de qualquer sessão.
+    AnySession,
 }
 
 /// Uma ponta do pipe (bloqueante). `Read`/`Write` comuns.
@@ -137,17 +149,33 @@ pub(crate) struct PipeServer {
     first: bool,
     session: u32,
     image: String,
+    clients: Clients,
 }
 
+// SAFETY: o descritor de segurança é memória comum do processo, usada por
+// uma thread de cada vez.
+unsafe impl Send for PipeServer {}
+
 impl PipeServer {
-    pub fn new() -> io::Result<Self> {
+    /// Servidor do agente desta sessão.
+    pub fn agent() -> io::Result<Self> {
         let session = own_session()?;
+        Self::new(&agent_pipe_name(session), Clients::SameSessionOrService)
+    }
+
+    /// Servidor do serviço, para os apps.
+    pub fn service() -> io::Result<Self> {
+        Self::new(SERVICE_PIPE, Clients::AnySession)
+    }
+
+    fn new(name: &str, clients: Clients) -> io::Result<Self> {
         Ok(Self {
-            name: wide(&pipe_name(session)),
+            name: wide(name),
             descriptor: Descriptor::new()?,
             first: true,
-            session,
+            session: own_session()?,
             image: own_image()?,
+            clients,
         })
     }
 
@@ -204,7 +232,11 @@ impl PipeServer {
             GetNamedPipeClientSessionId(stream.raw(), &mut session)
                 .map_err(|e| win_err("GetNamedPipeClientSessionId", e))?;
         }
-        if session != self.session {
+        let session_ok = match self.clients {
+            Clients::SameSessionOrService => session == self.session || session == 0,
+            Clients::AnySession => true,
+        };
+        if !session_ok {
             return Err(denied(format!("cliente de outra sessão ({session})")));
         }
         let image = process_image(pid)?;
@@ -222,7 +254,29 @@ fn denied(msg: String) -> io::Error {
 /// Conecta ao agente desta sessão. Falha se o serviço não estiver instalado
 /// (ou o agente ainda não subiu) — o app então captura por conta própria.
 pub fn connect_agent() -> io::Result<PipeStream> {
-    let name = wide(&pipe_name(own_session()?));
+    connect(&agent_pipe_name(own_session()?))
+}
+
+/// Serviço: conecta ao agente da sessão que está no console agora.
+pub fn connect_console_agent() -> io::Result<PipeStream> {
+    // SAFETY: sem ponteiros.
+    let session = unsafe { windows::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId() };
+    if session == 0xFFFF_FFFF {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "nenhuma sessão no console",
+        ));
+    }
+    connect(&agent_pipe_name(session))
+}
+
+/// App: conecta ao serviço (falha se ele não estiver rodando).
+pub fn connect_service() -> io::Result<PipeStream> {
+    connect(SERVICE_PIPE)
+}
+
+fn connect(name: &str) -> io::Result<PipeStream> {
+    let name = wide(name);
     let mut waited = false;
     let stream = loop {
         // SAFETY: nome terminado em zero; `SECURITY_IDENTIFICATION` impede o

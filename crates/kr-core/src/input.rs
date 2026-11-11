@@ -21,6 +21,24 @@ pub trait InputSink {
     }
 }
 
+impl<S: InputSink + ?Sized> InputSink for Box<S> {
+    fn move_to(&mut self, x: NormCoord, y: NormCoord) {
+        (**self).move_to(x, y)
+    }
+    fn button(&mut self, button: MouseButton, down: bool) {
+        (**self).button(button, down)
+    }
+    fn wheel(&mut self, dx: i32, dy: i32) {
+        (**self).wheel(dx, dy)
+    }
+    fn key(&mut self, code: u16, ext: bool, down: bool) {
+        (**self).key(code, ext, down)
+    }
+    fn secure_attention(&mut self) {
+        (**self).secure_attention()
+    }
+}
+
 /// Maior scancode aceito (conjunto 1 vai até 0x7F; deixamos folga).
 const MAX_SCANCODE: u16 = 0xFF;
 /// Limite por mensagem de roda, contra valores absurdos.

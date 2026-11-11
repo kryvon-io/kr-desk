@@ -35,6 +35,8 @@ pub const AGENT_PROTOCOL_VERSION: u16 = 1;
 
 /// Maior mensagem aceita (um quadro 4K BGRA tem ~33 MB).
 const MAX_MESSAGE: usize = 64 * 1024 * 1024;
+/// Maior texto da área de transferência (50 mil caracteres de até 4 bytes).
+const MAX_CLIPBOARD_BYTES: usize = 200_000;
 /// Maior forma de cursor aceita.
 const MAX_CURSOR_BYTES: usize = 256 * 256 * 4;
 
@@ -43,6 +45,8 @@ const MAX_CURSOR_BYTES: usize = 256 * 256 * 4;
 pub enum Role {
     Capture,
     Input,
+    /// Área de transferência (texto), por consulta periódica.
+    Clipboard,
 }
 
 /// Pedido do app ao agente.
@@ -79,6 +83,10 @@ pub enum Request {
     },
     /// Ctrl+Alt+Del (secure attention sequence).
     Sas,
+    /// Consulta a área de transferência; `set` = texto vindo do viewer.
+    ClipboardPoll {
+        set: Option<String>,
+    },
 }
 
 /// Resposta do agente (conexões de captura).
@@ -87,8 +95,15 @@ pub enum Reply {
     Ok,
     Frame(BgraFrame),
     NoFrame,
-    Error { transient: bool, message: String },
+    Error {
+        transient: bool,
+        message: String,
+    },
     Event(SourceEvent),
+    /// Texto copiado no host desde a última consulta.
+    Clipboard {
+        text: Option<String>,
+    },
 }
 
 // --- codificação -------------------------------------------------------------
@@ -102,6 +117,7 @@ mod tag {
     pub const WHEEL: u8 = 6;
     pub const KEY: u8 = 7;
     pub const SAS: u8 = 8;
+    pub const CLIPBOARD_POLL: u8 = 9;
 
     pub const OK: u8 = 20;
     pub const FRAME: u8 = 21;
@@ -110,6 +126,7 @@ mod tag {
     pub const CURSOR_SHAPE: u8 = 24;
     pub const CURSOR_VISIBLE: u8 = 25;
     pub const MONITORS: u8 = 26;
+    pub const CLIPBOARD: u8 = 27;
 }
 
 fn bad(msg: impl Into<String>) -> io::Error {
@@ -190,6 +207,9 @@ impl<'a> Dec<'a> {
         }
         self.take(n)
     }
+    fn text(&mut self, max: usize) -> io::Result<String> {
+        String::from_utf8(self.bytes(max)?.to_vec()).map_err(|_| bad("texto inválido"))
+    }
     fn string(&mut self) -> io::Result<String> {
         Ok(String::from_utf8_lossy(self.bytes(1024)?).into_owned())
     }
@@ -233,6 +253,7 @@ impl Request {
                     .u8(match role {
                         Role::Capture => 1,
                         Role::Input => 2,
+                        Role::Clipboard => 3,
                     })
                     .0
             }
@@ -251,6 +272,15 @@ impl Request {
             Request::Wheel { dx, dy } => Enc::new(tag::WHEEL).i32(dx).i32(dy).0,
             Request::Key { code, ext, down } => Enc::new(tag::KEY).u16(code).bool(ext).bool(down).0,
             Request::Sas => Enc::new(tag::SAS).0,
+            Request::ClipboardPoll { ref set } => match set {
+                Some(t) => {
+                    Enc::new(tag::CLIPBOARD_POLL)
+                        .bool(true)
+                        .bytes(t.as_bytes())
+                        .0
+                }
+                None => Enc::new(tag::CLIPBOARD_POLL).bool(false).0,
+            },
         }
     }
 
@@ -262,6 +292,7 @@ impl Request {
                 role: match d.u8()? {
                     1 => Role::Capture,
                     2 => Role::Input,
+                    3 => Role::Clipboard,
                     _ => return Err(bad("papel desconhecido")),
                 },
             },
@@ -288,6 +319,13 @@ impl Request {
                 down: d.bool()?,
             },
             tag::SAS => Request::Sas,
+            tag::CLIPBOARD_POLL => Request::ClipboardPoll {
+                set: if d.bool()? {
+                    Some(d.text(MAX_CLIPBOARD_BYTES)?)
+                } else {
+                    None
+                },
+            },
             t => return Err(bad(format!("pedido desconhecido: {t}"))),
         })
     }
@@ -336,6 +374,10 @@ impl Reply {
                     .bytes(rgba)
                     .0
             }
+            Reply::Clipboard { text } => match text {
+                Some(t) => Enc::new(tag::CLIPBOARD).bool(true).bytes(t.as_bytes()).0,
+                None => Enc::new(tag::CLIPBOARD).bool(false).0,
+            },
             Reply::Event(SourceEvent::Monitors { list, active }) => {
                 let mut e = Enc::new(tag::MONITORS).u32(*active).u32(list.len() as u32);
                 for m in list {
@@ -388,6 +430,13 @@ impl Reply {
                     rgba,
                 }))
             }
+            tag::CLIPBOARD => Reply::Clipboard {
+                text: if d.bool()? {
+                    Some(d.text(MAX_CLIPBOARD_BYTES)?)
+                } else {
+                    None
+                },
+            },
             tag::MONITORS => {
                 let active = d.u32()?;
                 let n = d.u32()?.min(64);
@@ -498,6 +547,19 @@ impl<S: Read + Write> AgentSource<S> {
         })
     }
 
+    /// Sem conectar agora: a primeira captura conecta (útil quando o agente
+    /// ainda está subindo, ex.: na tela de login).
+    pub fn lazy(connect: Connector<S>) -> Self {
+        Self {
+            connect,
+            stream: None,
+            frame: BgraFrame::new(2, 2),
+            events: VecDeque::new(),
+            buf: Vec::new(),
+            selected: None,
+        }
+    }
+
     fn ensure(&mut self) -> Result<&mut S, CaptureError> {
         if self.stream.is_none() {
             let mut stream = (self.connect)().map_err(|e| {
@@ -604,6 +666,16 @@ impl<S: Read + Write> AgentInputSink<S> {
         })
     }
 
+    /// Sem conectar agora: conecta no primeiro comando.
+    pub fn lazy(connect: Connector<S>, area: SharedArea) -> Self {
+        Self {
+            connect,
+            stream: None,
+            area,
+            failures: 0,
+        }
+    }
+
     fn send(&mut self, req: Request) {
         if self.stream.is_none() {
             let opened = (self.connect)()
@@ -649,6 +721,70 @@ impl<S: Read + Write> InputSink for AgentInputSink<S> {
     }
 }
 
+/// Intervalo das consultas à área de transferência do agente.
+const CLIPBOARD_POLL: Duration = Duration::from_millis(300);
+
+/// Área de transferência do host vista pelo agente: uma thread consulta o
+/// agente a cada 300 ms (texto novo → `on_change`) e leva junto o texto que
+/// veio do viewer. Para quando é descartada.
+pub struct AgentClipboard {
+    pending: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl AgentClipboard {
+    pub fn start<S: Read + Write + 'static>(
+        mut connect: Connector<S>,
+        on_change: Box<dyn Fn(String) + Send + Sync>,
+    ) -> Self {
+        use std::sync::atomic::Ordering;
+        let pending: std::sync::Arc<std::sync::Mutex<Option<String>>> = Default::default();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (p, st) = (pending.clone(), stop.clone());
+        std::thread::spawn(move || {
+            let mut stream: Option<S> = None;
+            let mut buf = Vec::new();
+            while !st.load(Ordering::Relaxed) {
+                std::thread::sleep(CLIPBOARD_POLL);
+                if stream.is_none() {
+                    let opened = connect()
+                        .and_then(|mut s| hello(&mut s, Role::Clipboard, &mut buf).map(|()| s));
+                    match opened {
+                        Ok(s) => stream = Some(s),
+                        Err(_) => continue,
+                    }
+                }
+                let set = p.lock().ok().and_then(|mut x| x.take());
+                let s = stream.as_mut().expect("aberta acima");
+                let result = write_request(s, &Request::ClipboardPoll { set })
+                    .and_then(|()| read_reply(s, &mut buf));
+                match result {
+                    Ok(Reply::Clipboard { text: Some(text) }) => on_change(text),
+                    Ok(_) => {}
+                    Err(err) => {
+                        tracing::warn!(%err, "área de transferência do agente indisponível");
+                        stream = None;
+                    }
+                }
+            }
+        });
+        Self { pending, stop }
+    }
+
+    /// Texto vindo do viewer: vai na próxima consulta.
+    pub fn set_remote(&self, text: &str) {
+        if let Ok(mut p) = self.pending.lock() {
+            *p = Some(text.to_owned());
+        }
+    }
+}
+
+impl Drop for AgentClipboard {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 // --- lado do agente -------------------------------------------------------------
 
 /// O que o agente sabe fazer; a implementação real fica no `kr-service-win`.
@@ -657,6 +793,17 @@ pub trait AgentBackend {
     fn open_source(&mut self) -> Result<Box<dyn FrameSource>, CaptureError>;
     /// Destino da entrada; `area` é atualizada a cada movimento.
     fn open_sink(&mut self, area: SharedArea) -> Box<dyn InputSink>;
+    /// Observa a área de transferência (texto copiado → `on_change`).
+    fn open_clipboard(
+        &mut self,
+        on_change: Box<dyn Fn(String) + Send + Sync>,
+    ) -> Box<dyn ClipboardTarget>;
+}
+
+/// Área de transferência do lado do agente.
+pub trait ClipboardTarget {
+    /// Escreve o texto vindo do viewer (sem ecoar de volta).
+    fn set_remote(&mut self, text: &str);
 }
 
 const MAX_SCANCODE: u16 = 0xFF;
@@ -686,6 +833,7 @@ pub fn serve<S: Read + Write>(stream: &mut S, backend: &mut dyn AgentBackend) ->
     match role {
         Role::Capture => serve_capture(stream, backend, buf),
         Role::Input => serve_input(stream, backend, buf),
+        Role::Clipboard => serve_clipboard(stream, backend, buf),
     }
 }
 
@@ -775,6 +923,36 @@ fn serve_capture<S: Read + Write>(
                 write_reply(stream, &reply)?;
             }
             other => return Err(bad(format!("pedido inválido na captura: {other:?}"))),
+        }
+    }
+}
+
+fn serve_clipboard<S: Read + Write>(
+    stream: &mut S,
+    backend: &mut dyn AgentBackend,
+    mut buf: Vec<u8>,
+) -> io::Result<()> {
+    let latest: std::sync::Arc<std::sync::Mutex<Option<String>>> = Default::default();
+    let sink = latest.clone();
+    let mut target = backend.open_clipboard(Box::new(move |text| {
+        if let Ok(mut l) = sink.lock() {
+            *l = Some(text);
+        }
+    }));
+    loop {
+        match read_request(stream, &mut buf)? {
+            Request::ClipboardPoll { set } => {
+                if let Some(text) = set {
+                    target.set_remote(&text);
+                }
+                let text = latest.lock().ok().and_then(|mut l| l.take());
+                write_reply(stream, &Reply::Clipboard { text })?;
+            }
+            other => {
+                return Err(bad(format!(
+                    "pedido inválido na área de transferência: {other:?}"
+                )));
+            }
         }
     }
 }
@@ -883,6 +1061,21 @@ mod tests {
                 30,
             )))
         }
+        fn open_clipboard(
+            &mut self,
+            on_change: Box<dyn Fn(String) + Send + Sync>,
+        ) -> Box<dyn ClipboardTarget> {
+            // Simula alguém copiando no host logo ao abrir.
+            on_change("copiado no host".into());
+            struct Target(Log);
+            impl ClipboardTarget for Target {
+                fn set_remote(&mut self, text: &str) {
+                    self.0.0.lock().unwrap().push(format!("clip {text}"));
+                }
+            }
+            Box::new(Target(self.log.clone()))
+        }
+
         fn open_sink(&mut self, area: SharedArea) -> Box<dyn InputSink> {
             struct Recording(Log, SharedArea, Arc<Mutex<Vec<Option<DesktopRect>>>>);
             impl InputSink for Recording {
@@ -965,6 +1158,14 @@ mod tests {
                 down: false,
             },
             Request::Sas,
+            Request::ClipboardPoll { set: None },
+            Request::ClipboardPoll {
+                set: Some("olá ✓".into()),
+            },
+            Request::Hello {
+                version: 1,
+                role: Role::Clipboard,
+            },
         ];
         for r in reqs {
             assert_eq!(Request::decode(&r.encode()).unwrap(), r);
@@ -980,6 +1181,10 @@ mod tests {
                 message: "acesso perdido".into(),
             },
             Reply::Event(SourceEvent::Cursor(CursorUpdate::Visible(false))),
+            Reply::Clipboard { text: None },
+            Reply::Clipboard {
+                text: Some("texto".into()),
+            },
             Reply::Event(SourceEvent::Cursor(CursorUpdate::Shape {
                 width: 1,
                 height: 2,
@@ -1123,6 +1328,38 @@ mod tests {
             ]
         );
         assert_eq!(*areas.lock().unwrap(), vec![None, Some(rect)]);
+    }
+
+    #[test]
+    fn area_de_transferencia_pelo_agente() {
+        let b = Arc::new(Mutex::new(backend()));
+        let log = b.lock().unwrap().log.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let clip = AgentClipboard::start(
+            agent(&b),
+            Box::new(move |t| {
+                let _ = tx.send(t);
+            }),
+        );
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(3)).unwrap(),
+            "copiado no host"
+        );
+        clip.set_remote("do viewer");
+        for _ in 0..30 {
+            if log.0.lock().unwrap().iter().any(|l| l == "clip do viewer") {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("texto do viewer não chegou: {:?}", log.0.lock().unwrap());
+    }
+
+    #[test]
+    fn captura_preguicosa_conecta_na_primeira_chamada() {
+        let b = Arc::new(Mutex::new(backend()));
+        let mut source = AgentSource::lazy(agent(&b));
+        assert!(source.capture(Duration::from_millis(10)).unwrap().is_some());
     }
 
     #[test]

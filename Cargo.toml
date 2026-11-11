@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "apps/desktop/src-tauri"]
 
 [workspace.package]
-version = "0.8.0"
+version = "0.8.1"
 edition = "2024"
 rust-version = "1.97"
 license = "AGPL-3.0-only"
@@ -20,6 +20,7 @@ kr-capture-win = { path = "crates/kr-capture-win" }
 kr-codec-win = { path = "crates/kr-codec-win" }
 kr-input-win = { path = "crates/kr-input-win" }
 kr-service-win = { path = "crates/kr-service-win" }
+kr-host = { path = "crates/kr-host" }
 
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

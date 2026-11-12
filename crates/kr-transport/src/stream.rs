@@ -114,6 +114,8 @@ impl VideoStream {
                     }
                     Err(err) => {
                         if failing == 0 {
+                            // O erro do webrtc-rs traz os pacotes inteiros: só o começo.
+                            let err: String = err.to_string().chars().take(200).collect();
                             warn!(%err, "falha ao enviar quadro; tentando de novo");
                         }
                         failing += 1;

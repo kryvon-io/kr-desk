@@ -291,7 +291,10 @@ impl P2pManager {
                     }
                     changed = control_rx.changed() => {
                         if changed.is_err() {
-                            continue;
+                            // `close()` descartou o controle desta sessão: acabou.
+                            // (Antes o laço seguia girando e a transmissão da
+                            // tela continuava depois do fim da sessão.)
+                            break;
                         }
                         let allow = *control_rx.borrow_and_update();
                         status.control = allow;

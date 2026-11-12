@@ -36,9 +36,8 @@ As builds ainda **não são assinadas** (Authenticode): o SmartScreen exibirá u
 ### Publicar uma versão
 
 1. Suba a versão em `Cargo.toml`, `apps/desktop/package.json` e `apps/desktop/src-tauri/tauri.conf.json` (num PR).
-2. Depois do merge, crie **só a tag**: `git tag v<versão> && git push origin v<versão>`. Não publique uma release à mão: o workflow cria a dele, e duas releases com a mesma tag confundem a atualização.
-3. O workflow **Release (Windows)** gera o instalador, o pacote assinado da atualização e o `latest.json` num **rascunho** de release.
-4. Revise o rascunho e clique em **Publish release**: a partir daí, os apps instalados recebem a atualização.
+2. Depois do merge, em _Releases_ → **Draft a new release**: tag `v<versão>` (nova, a partir de `main`) → **Publish release**.
+3. O workflow **Release (Windows)** confere a versão e anexa a essa release o instalador, o pacote assinado da atualização e o `latest.json` (uns 15 minutos). Assim que o `latest.json` aparece, os apps instalados recebem a atualização.
 
 A atualização automática exige os segredos `TAURI_SIGNING_PRIVATE_KEY` e `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` no repositório.
 

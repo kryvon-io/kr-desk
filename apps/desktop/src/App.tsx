@@ -9,6 +9,7 @@ import { SecurityAlertDialog } from "@/components/security-alert-dialog";
 import { SessionBanner } from "@/components/session-banner";
 import { StatusBadge } from "@/components/status-badge";
 import { UnattendedCard } from "@/components/unattended-card";
+import { UpdateBanner } from "@/components/update-banner";
 import { fetchAppInfo, type AppInfo } from "@/lib/app-info";
 import { useSignaling } from "@/lib/use-signaling";
 
@@ -83,6 +84,8 @@ export default function App() {
           onToggleControl={setSessionControl}
         />
       )}
+
+      {tauri && <UpdateBanner />}
 
       {state.notice && (
         <div className="flex w-full max-w-md items-center justify-between gap-2 rounded-lg border bg-muted px-4 py-2 text-sm">

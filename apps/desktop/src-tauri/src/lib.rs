@@ -6,6 +6,7 @@ mod logging;
 mod remote_input;
 mod screen;
 mod tray;
+mod updater;
 
 use std::sync::Arc;
 
@@ -67,6 +68,8 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updater::PendingUpdate::default())
         .setup(|app| {
             let data_dir = app.path().app_local_data_dir()?;
             logging::init(&data_dir.join("logs"), "kr-desk.log");
@@ -85,6 +88,7 @@ pub fn run() {
             tray::create(app.handle())?;
             app.manage(remote_input::KeyboardCapture::install(app.handle()));
             app.manage(remote_input::ViewerClipboard::default());
+            updater::spawn_checks(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -114,6 +118,8 @@ pub fn run() {
             commands::unattended_status,
             commands::set_unattended_password,
             commands::disable_unattended,
+            updater::check_update,
+            updater::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("falha ao iniciar o KR Desk");

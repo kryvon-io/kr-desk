@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   release:
-    name: Instalador NSIS → GitHub Release (rascunho)
+    name: Instalador NSIS + atualização automática → GitHub Release (rascunho)
     runs-on: windows-latest
     permissions:
       contents: write # necessário para criar o Release
@@ -28,17 +28,34 @@ jobs:
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
+      - name: Conferir a versão (tag = versão do app)
+        shell: bash
+        run: |
+          app="v$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")"
+          if [ "$app" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::A tag $GITHUB_REF_NAME não bate com a versão do app ($app)."
+            exit 1
+          fi
+      # Gera também o pacote assinado e o latest.json da atualização automática.
+      # O app só instala atualizações assinadas com esta chave (a pública está
+      # em tauri.conf.json).
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
           tauriScript: pnpm tauri
-          args: --bundles nsis
+          args: --bundles nsis --config src-tauri/tauri.release.conf.json
+          includeUpdaterJson: true
           tagName: ${{ github.ref_name }}
           releaseName: KR Desk ${{ github.ref_name }}
           releaseBody: |
             Instalador para Windows 10/11 (64 bits).
             ⚠️ Build ainda NÃO assinada: o SmartScreen mostrará um aviso — use "Mais informações → Executar assim mesmo".
+            Quem já tem o KR Desk instalado recebe esta versão pela atualização automática.
+          # Rascunho: revise e clique em "Publish release". Só depois de
+          # publicada ela vira a "latest" que os apps instalados enxergam.
           releaseDraft: true
-          prerelease: true
+          prerelease: false

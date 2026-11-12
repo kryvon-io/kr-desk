@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "KR Desk",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "identifier": "com.krdesk.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -28,7 +28,7 @@
     "active": true,
     "targets": ["nsis"],
     "publisher": "KR Desk",
-    "copyright": "\u00a9 KR Desk contributors \u2014 AGPL-3.0-only",
+    "copyright": "© KR Desk contributors — AGPL-3.0-only",
     "category": "Utility",
     "shortDescription": "Acesso remoto seguro",
     "icon": [
@@ -47,6 +47,15 @@
         "installerHooks": "./windows/installer-hooks.nsh",
         "languages": ["PortugueseBR", "English"],
         "displayLanguageSelector": false
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkzMkUxNzMxMTYzODUzNDUKUldSRlV6Z1dNUmN1a3lWSHl4WmhncktpZXFKWDlOc0tKRWwyd2RaZVhDMjVsSnhmM2Fmc0JuYVMK",
+      "endpoints": ["https://github.com/kryvon-io/kr-desk/releases/latest/download/latest.json"],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

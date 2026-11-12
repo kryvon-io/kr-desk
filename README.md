@@ -26,9 +26,21 @@ crates/kr-proto   Tipos do protocolo
 crates/kr-core    Núcleo de sessão, independente de plataforma
 ```
 
-## Baixar uma build de teste
+## Baixar
 
-Cada execução do workflow **CI** gera o artefato `kr-desk-windows-x64-nsis` (aba _Actions_ → execução → _Artifacts_). As builds ainda **não são assinadas**: o SmartScreen exibirá um aviso — use "Mais informações → Executar assim mesmo".
+- **Versão publicada:** [última release](https://github.com/kryvon-io/kr-desk/releases/latest) → `KR Desk_<versão>_x64-setup.exe`. Depois de instalado, o app avisa sozinho quando sai versão nova ("Atualizar e reiniciar").
+- **Build de teste:** cada execução do workflow **CI** gera o artefato `kr-desk-windows-x64-nsis` (aba _Actions_ → execução → _Artifacts_).
+
+As builds ainda **não são assinadas** (Authenticode): o SmartScreen exibirá um aviso — use "Mais informações → Executar assim mesmo".
+
+### Publicar uma versão
+
+1. Suba a versão em `Cargo.toml`, `apps/desktop/package.json` e `apps/desktop/src-tauri/tauri.conf.json` (num PR).
+2. Depois do merge: `git tag v<versão> && git push origin v<versão>` (ou crie a tag na tela _Releases_).
+3. O workflow **Release (Windows)** gera o instalador, o pacote assinado da atualização e o `latest.json` num **rascunho** de release.
+4. Revise e clique em **Publish release**: a partir daí, os apps instalados recebem a atualização.
+
+A atualização automática exige os segredos `TAURI_SIGNING_PRIVATE_KEY` e `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` no repositório.
 
 ## Desenvolvimento
 

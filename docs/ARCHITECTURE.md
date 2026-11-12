@@ -1,6 +1,6 @@
 # KR Desk — Validação de stack, arquitetura e plano de etapas
 
-> Status (12/11/2026): Etapas 0–7 concluídas · Etapa 8: partes 1 (serviço: UAC, tela de bloqueio, Ctrl+Alt+Del) e 2a (o serviço é o host) concluídas · parte 2b (acesso não assistido com senha) em PR · a seguir: Etapa 9. Revisão de ameaças: `docs/SECURITY-REVIEW.md`. Repositório público `kryvon-io/kr-desk` (AGPL-3.0).
+> Status (12/11/2026): Etapas 0–8 concluídas · Etapa 9, parte 1 (atualização automática e publicação de versões) em PR · parte 2 (assinatura Authenticode via SignPath) aguardando a aprovação do projeto na SignPath Foundation. Revisão de ameaças: `docs/SECURITY-REVIEW.md`. Repositório público `kryvon-io/kr-desk` (AGPL-3.0).
 
 ---
 

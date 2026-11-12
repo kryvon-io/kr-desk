@@ -1,6 +1,6 @@
 # KR Desk — Validação de stack, arquitetura e plano de etapas
 
-> Status (12/11/2026): Etapas 0–8 concluídas · Etapa 9, parte 1 (atualização automática e publicação de versões) em PR · parte 2 (assinatura Authenticode via SignPath) aguardando a aprovação do projeto na SignPath Foundation. Revisão de ameaças: `docs/SECURITY-REVIEW.md`. Repositório público `kryvon-io/kr-desk` (AGPL-3.0).
+> Status (12/11/2026): Etapas 0–8 concluídas · Etapa 9, parte 1 (atualização automática e publicação de versões) concluída · TURN ativo · falta só a parte 2 da Etapa 9 (assinatura Authenticode via SignPath), deixada por último. Revisão de ameaças: `docs/SECURITY-REVIEW.md`. Repositório público `kryvon-io/kr-desk` (AGPL-3.0).
 
 ---
 
@@ -212,7 +212,7 @@ MVP utilizável = Etapas 0–6. Etapas 7–9 levam a nível de produto.
 - **Vercel:** projeto `kr-desk-server` (Root `apps/server`, Fluid, região `gru1`, Node 24.x — o Node 26 ainda não é oferecido; o servidor usa `temporal-polyfill` porque o Prisma 8 precisa de `Temporal`). Proteção de acesso só nos previews.
 - **Neon:** projeto `kr-desk` (São Paulo, Postgres 17). Variáveis `DATABASE_URL` (pooler) e `DATABASE_URL_UNPOOLED` na Vercel. O servidor usa a **conexão direta**: o pooler da Neon recusa parâmetros de inicialização que o Prisma 8 envia (`lc_monetary`).
 - **Upstash Redis:** `kr-desk-redis` (Free, `gru1`), variável `REDIS_URL` na Vercel.
-- **TURN:** adiado. A Cloudflare exige cartão mesmo no plano grátis; o servidor usa só STUN (`stun.cloudflare.com`) até `CF_TURN_KEY_ID`/`CF_TURN_API_TOKEN` serem configurados — sem mudança de código.
+- **TURN:** ativo desde 12/11/2026 (Cloudflare Realtime TURN, chave `kr-desk`). O servidor gera credenciais efêmeras por sessão com `CF_TURN_KEY_ID`/`CF_TURN_API_TOKEN` (só em Production na Vercel); se a Cloudflare falhar, registra "falha ao gerar credenciais TURN" e a sessão segue só com STUN.
 - **Migrações:** aplicadas automaticamente apenas em deploys de produção (`apps/server/scripts/vercel-build.mjs`).
 
 ### Custos do MVP (estimados)

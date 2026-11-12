@@ -15,6 +15,13 @@
   },
   {
     "v": 1,
+    "type": "connect_request",
+    "request_id": "6f1c2b9e-3d4a-4c5b-9e8f-0a1b2c3d4e5f",
+    "target_id": "123456789",
+    "unattended": true
+  },
+  {
+    "v": 1,
     "type": "connect_response",
     "request_id": "6f1c2b9e-3d4a-4c5b-9e8f-0a1b2c3d4e5f",
     "accept": true
@@ -23,8 +30,19 @@
     "v": 1,
     "type": "signal",
     "request_id": "6f1c2b9e-3d4a-4c5b-9e8f-0a1b2c3d4e5f",
-    "payload": { "kind": "offer", "sdp": "v=0\r\n" }
+    "payload": {
+      "kind": "offer",
+      "sdp": "v=0\r\n"
+    }
   },
-  { "v": 1, "type": "end_session", "request_id": "6f1c2b9e-3d4a-4c5b-9e8f-0a1b2c3d4e5f" },
-  { "v": 1, "type": "ping", "nonce": 42 }
+  {
+    "v": 1,
+    "type": "end_session",
+    "request_id": "6f1c2b9e-3d4a-4c5b-9e8f-0a1b2c3d4e5f"
+  },
+  {
+    "v": 1,
+    "type": "ping",
+    "nonce": 42
+  }
 ]

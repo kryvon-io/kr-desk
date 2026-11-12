@@ -148,7 +148,19 @@ pub enum ControlMessage {
     Clipboard {
         text: String,
     },
+    /// Viewer → host: senha de acesso não assistido (só depois de o host
+    /// provar a identidade; viaja cifrada pelo DTLS).
+    Unlock {
+        password: String,
+    },
+    /// Host → viewer: acesso recusado (senha errada, tentativas demais…).
+    Denied {
+        reason: String,
+    },
 }
+
+/// Maior senha de acesso não assistido aceita.
+pub const MAX_PASSWORD_CHARS: usize = 128;
 
 /// Limite de texto da área de transferência por mensagem (o SCTP do
 /// DataChannel aceita até ~256 KB; texto em UTF-8 pode ter 4 bytes/caractere).

@@ -26,5 +26,7 @@
   { "t": "auth", "pk": "cGs", "sig": "c2ln" },
   { "t": "permissions", "control": false },
   { "t": "rx_report", "lost": 3, "received": 997, "rtt_ms": 12 },
-  { "t": "clipboard", "text": "olá, ação! ç" }
+  { "t": "clipboard", "text": "olá, ação! ç" },
+  { "t": "unlock", "password": "s3nh@ forte" },
+  { "t": "denied", "reason": "Senha incorreta." }
 ]

@@ -76,7 +76,12 @@ pub fn run() {
 
             // Chaves dos computadores já conectados (TOFU), usadas nos dois papéis.
             let known = Arc::new(std::sync::Mutex::new(KnownPeers::load(&data_dir)));
-            app.manage(backend::AppState::start(app.handle(), identity, known));
+            app.manage(backend::AppState::start(
+                app.handle(),
+                identity,
+                known,
+                data_dir.clone(),
+            ));
             tray::create(app.handle())?;
             app.manage(remote_input::KeyboardCapture::install(app.handle()));
             app.manage(remote_input::ViewerClipboard::default());
@@ -106,6 +111,9 @@ pub fn run() {
             commands::set_viewer_clipboard,
             commands::write_clipboard,
             commands::signaling_reconnect,
+            commands::unattended_status,
+            commands::set_unattended_password,
+            commands::disable_unattended,
         ])
         .run(tauri::generate_context!())
         .expect("falha ao iniciar o KR Desk");

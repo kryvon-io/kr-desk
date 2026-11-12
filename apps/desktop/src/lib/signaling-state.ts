@@ -31,6 +31,7 @@ export type ServerMessage =
       from_id: string;
       from_name: string;
       from_public_key: string;
+      unattended?: boolean;
     }
   | { type: "connect_pending"; request_id: string }
   | {
@@ -135,6 +136,8 @@ export type Action =
   | { type: "incoming_answered"; requestId: string; accepted: boolean }
   | { type: "outgoing_reset" }
   | { type: "session_closed"; requestId: string }
+  /** O host recusou o acesso depois de conectar (ex.: senha errada). */
+  | { type: "session_denied"; requestId: string; reason: string }
   | { type: "notice_dismissed" }
   | { type: "security_failed"; alert: SecurityAlert }
   | { type: "security_dismissed" }
@@ -204,6 +207,12 @@ export function reducer(state: SignalingState, action: Action): SignalingState {
           outgoingRequestId(state.outgoing) === action.requestId
             ? { kind: "idle" }
             : state.outgoing,
+      };
+    case "session_denied":
+      return {
+        ...state,
+        active: state.active?.requestId === action.requestId ? null : state.active,
+        outgoing: { kind: "failed", message: `Acesso recusado: ${action.reason}` },
       };
     case "notice_dismissed":
       return { ...state, notice: null };

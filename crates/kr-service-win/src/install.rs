@@ -67,19 +67,50 @@ fn ensure_protected_location(exe: &std::path::Path) -> io::Result<()> {
     }
 }
 
-/// O serviço está instalado? (Qualquer usuário pode consultar.)
+/// O serviço está instalado **e roda este mesmo executável**? Uma cópia
+/// "só para mim" do app, instalada ao lado da versão "para todos", não é
+/// atendida pelo serviço (ele só aceita o executável dele) e então segue
+/// sozinha. Qualquer usuário pode consultar.
 pub fn service_installed() -> bool {
-    use windows::Win32::System::Services::{SC_MANAGER_CONNECT, SERVICE_QUERY_STATUS};
+    use windows::Win32::System::Services::{
+        QUERY_SERVICE_CONFIGW, QueryServiceConfigW, SC_MANAGER_CONNECT, SERVICE_QUERY_CONFIG,
+    };
     let name = wide(SERVICE_NAME);
-    // SAFETY: sem ponteiros além dos nulos e do nome terminado em zero.
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    let exe = exe.to_string_lossy().to_lowercase();
+    // SAFETY: nome terminado em zero; buffer com o tamanho informado e
+    // alinhado para QUERY_SERVICE_CONFIGW.
     unsafe {
         let Ok(scm) = OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_CONNECT) else {
             return false;
         };
         let scm = Sc(scm);
-        OpenServiceW(scm.0, PCWSTR(name.as_ptr()), SERVICE_QUERY_STATUS)
-            .map(Sc)
-            .is_ok()
+        let Ok(service) = OpenServiceW(scm.0, PCWSTR(name.as_ptr()), SERVICE_QUERY_CONFIG) else {
+            return false;
+        };
+        let service = Sc(service);
+        let mut needed = 0u32;
+        let _ = QueryServiceConfigW(service.0, None, 0, &mut needed);
+        if needed == 0 {
+            return false;
+        }
+        let mut buf = vec![0u64; (needed as usize).div_ceil(8)];
+        let config = buf.as_mut_ptr().cast::<QUERY_SERVICE_CONFIGW>();
+        if QueryServiceConfigW(service.0, Some(config), needed, &mut needed).is_err() {
+            return false;
+        }
+        let path = (*config).lpBinaryPathName;
+        if path.is_null() {
+            return false;
+        }
+        let bin = path.to_string().unwrap_or_default().to_lowercase();
+        let same = bin.contains(&exe);
+        if !same {
+            tracing::info!(%bin, %exe, "serviço instalado é de outra cópia do app; seguindo sem ele");
+        }
+        same
     }
 }
 

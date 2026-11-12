@@ -109,6 +109,23 @@ export function signalingSuite(name: string, env: () => SuiteEnv) {
       expect(await c.next("error")).toMatchObject({ code: "auth_required" });
     });
 
+    it("repassa o pedido de acesso não assistido (sem senha nenhuma pelo servidor)", async () => {
+      const [a, b] = await start();
+      const viewer = await device(a!, newIdentity(), "Notebook");
+      const host = await device(b!, newIdentity(), "Escritório");
+      const rid = newRequestId();
+      viewer.client.send({
+        type: "connect_request",
+        request_id: rid,
+        target_id: host.deviceId,
+        unattended: true,
+      });
+      expect(await host.client.next("incoming_request")).toMatchObject({
+        request_id: rid,
+        unattended: true,
+      });
+    });
+
     it("fluxo completo entre instâncias: pedido, aceite, sinais e encerramento", async () => {
       const [a, b] = await start();
       const viewer = await device(a!, newIdentity(), "Notebook");
@@ -125,6 +142,7 @@ export function signalingSuite(name: string, env: () => SuiteEnv) {
         from_name: "Notebook",
         from_public_key: viewer.identity.publicKey,
       });
+      expect(incoming).not.toHaveProperty("unattended");
 
       host.client.send({ type: "connect_response", request_id: rid, accept: true });
       expect(await viewer.client.next("connect_accepted")).toMatchObject({

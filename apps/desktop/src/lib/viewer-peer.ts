@@ -67,6 +67,8 @@ export interface ViewerPeerEvents {
   onPermissions?: (control: boolean) => void;
   /** Texto copiado no host. */
   onClipboard?: (text: string) => void;
+  /** O host recusou o acesso (ex.: senha de acesso não assistido errada). */
+  onDenied?: (reason: string) => void;
   /** Relatório de recepção enviado ao host (pacotes perdidos/recebidos). */
   onRxReport?: (lost: number, received: number) => void;
 }
@@ -75,6 +77,8 @@ export interface ViewerPeerEvents {
 export interface ViewerAuth {
   requestId: string;
   crypto: SessionCrypto;
+  /** Senha de acesso não assistido, enviada depois de o host se comprovar. */
+  password?: string | undefined;
 }
 
 const PING_INTERVAL_MS = 1000;
@@ -338,6 +342,10 @@ export class ViewerPeer {
     if (outcome.result === "ok") {
       this.authenticated = true;
       this.authDone = true;
+      // Só agora, com o host comprovado, a senha pode ir (pelo canal cifrado).
+      if (this.auth.password && this.control.readyState === "open") {
+        this.control.send(JSON.stringify({ t: "unlock", password: this.auth.password }));
+      }
       this.events.onAuth?.(outcome);
       this.timers.push(setInterval(() => void this.sendRxReport(), RX_REPORT_MS));
     } else {
@@ -419,6 +427,8 @@ export class ViewerPeer {
       void this.verifyHost(msg.pk, msg.sig);
     } else if (msg.t === "clipboard") {
       if (this.authenticated && this.controlAllowed) this.events.onClipboard?.(msg.text);
+    } else if (msg.t === "denied") {
+      this.events.onDenied?.(msg.reason);
     } else if (msg.t === "permissions") {
       this.controlAllowed = msg.control;
       this.events.onPermissions?.(msg.control);

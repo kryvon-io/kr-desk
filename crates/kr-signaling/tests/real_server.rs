@@ -61,6 +61,7 @@ async fn fluxo_completo_com_servidor_real() {
     let rid = "0b7c6a52-8d1e-4f3a-9b2c-7d6e5f4a3b21".to_string();
     viewer
         .send(ClientMessage::ConnectRequest {
+            unattended: false,
             request_id: rid.clone(),
             target_id: host_id.clone(),
         })

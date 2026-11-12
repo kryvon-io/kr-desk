@@ -22,6 +22,7 @@ use serde::Serialize;
 use tokio::sync::{Mutex, mpsc, watch};
 use tracing::{info, warn};
 
+use crate::unattended::Unattended;
 use crate::{BackendEvents, HostPlatform, RemoteClipboard};
 
 /// Intervalo para verificar se a transmissão da tela continua viva.
@@ -36,6 +37,8 @@ const RECONNECT_GRACE: Duration = Duration::from_secs(180);
 
 /// Prazo para o viewer provar sua identidade depois que o canal abre.
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
+/// Prazo para o viewer mandar a senha de acesso não assistido.
+const UNLOCK_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Estado da conexão P2P enviado à interface.
 #[derive(Debug, Clone, Serialize)]
@@ -55,6 +58,8 @@ pub struct P2pStatus {
     pub verification_code: Option<String>,
     /// Identidade do viewer verificada.
     pub authenticated: bool,
+    /// Sessão aberta pela senha de acesso não assistido (sem pedido aceito).
+    pub unattended: bool,
     /// Primeira conexão com este viewer (chave memorizada agora).
     pub first_contact: bool,
     /// Falha de segurança que encerrou a sessão.
@@ -73,6 +78,7 @@ impl P2pStatus {
             control,
             verification_code: None,
             authenticated: false,
+            unattended: false,
             first_contact: false,
             security_error: None,
         }
@@ -93,6 +99,9 @@ pub struct P2pManager {
     peers: Mutex<HashMap<String, Arc<HostPeer>>>,
     /// Permissão escolhida no diálogo, até a sessão começar.
     pending_control: std::sync::Mutex<HashMap<String, bool>>,
+    /// Pedidos aceitos sozinhos (acesso não assistido): exigem a senha.
+    password_required: std::sync::Mutex<std::collections::HashSet<String>>,
+    unattended: Arc<Unattended>,
     /// Permissão de controle de cada sessão ativa (pode mudar durante a sessão).
     controls: std::sync::Mutex<HashMap<String, watch::Sender<bool>>>,
 }
@@ -103,8 +112,11 @@ impl P2pManager {
         known: Arc<std::sync::Mutex<KnownPeers>>,
         events: Arc<dyn BackendEvents>,
         platform: Arc<dyn HostPlatform>,
+        unattended: Arc<Unattended>,
     ) -> Self {
         Self {
+            password_required: Default::default(),
+            unattended,
             events,
             platform,
             identity,
@@ -116,6 +128,14 @@ impl P2pManager {
     }
 
     /// Guarda a permissão escolhida ao aceitar o pedido.
+    /// A sessão `request_id` só começa com a senha de acesso não assistido.
+    pub fn require_password(&self, request_id: &str) {
+        self.password_required
+            .lock()
+            .expect("mutex")
+            .insert(request_id.to_owned());
+    }
+
     pub fn set_pending_control(&self, request_id: &str, allow: bool) {
         self.pending_control
             .lock()
@@ -148,6 +168,11 @@ impl P2pManager {
             .expect("mutex")
             .remove(&request_id)
             .unwrap_or(true);
+        let needs_password = self
+            .password_required
+            .lock()
+            .expect("mutex")
+            .remove(&request_id);
         let (tx, mut events) = mpsc::unbounded_channel();
         let peer = match HostPeer::new(&ice_servers, tx).await {
             Ok(p) => Arc::new(p),
@@ -177,9 +202,14 @@ impl P2pManager {
         let known = self.known.clone();
         let app = self.events.clone();
         let platform = self.platform.clone();
+        let unattended = self.unattended.clone();
         tokio::spawn(async move {
             let mut status = P2pStatus::new(&request_id, &viewer.peer_id, allow);
+            status.unattended = needs_password;
             app.p2p_status(&status);
+            // Identidade do viewer conferida (a senha, se exigida, vem depois).
+            let mut peer_verified = false;
+            let mut unlock_deadline: Option<tokio::time::Instant> = None;
             let mut fingerprints: Option<(String, String)> = None;
             let mut video: Option<VideoStream> = None;
             // Criado após autenticar; solta teclas/botões ao ser descartado.
@@ -213,6 +243,37 @@ impl P2pManager {
                     request_id: request_id.clone(),
                 });
             };
+
+            // Libera tela, entrada e área de transferência (viewer comprovado
+            // e, se exigida, senha conferida).
+            macro_rules! authorize {
+                () => {{
+                    status.authenticated = true;
+                                    if video.is_none() {
+                                        match platform
+                                            .start_video(video_sender.clone(), control_sender.clone())
+                                        {
+                                            Ok(stream) => {
+                                                info!(%request_id, "transmissão da tela iniciada");
+                                                video = Some(stream);
+                                                status.sharing = true;
+                                            }
+                                            Err(err) => warn!(%err, "tela não será transmitida"),
+                                        }
+                                    }
+                                    if status.control && clipboard.is_none() {
+                                        clipboard = Some(start_clipboard(&clip_tx));
+                                    }
+                                    if input.is_none() {
+                                        // A entrada mira o monitor que a captura estiver transmitindo.
+                                        let area =
+                                            video.as_ref().map(VideoStream::area).unwrap_or_default();
+                                        input = Some(kr_core::input::InputController::new(
+                                            platform.input(area),
+                                        ));
+                                    }
+                }};
+            }
 
             loop {
                 let ev = tokio::select! {
@@ -259,11 +320,25 @@ impl P2pManager {
                             app.p2p_status(&status);
                             break;
                         }
-                        if !status.authenticated
+                        if !peer_verified
                             && status.security_error.is_none()
                             && auth_deadline.is_some_and(|d| tokio::time::Instant::now() >= d)
                         {
                             fail(&mut status, "o outro computador não comprovou a identidade".into());
+                            app.p2p_status(&status);
+                            break;
+                        }
+                        if !status.authenticated
+                            && status.security_error.is_none()
+                            && unlock_deadline.is_some_and(|d| tokio::time::Instant::now() >= d)
+                        {
+                            control_sender
+                                .send(&ControlMessage::Denied {
+                                    reason: "A senha de acesso não assistido não foi informada."
+                                        .into(),
+                                })
+                                .await;
+                            fail(&mut status, "senha de acesso não assistido não informada".into());
                             app.p2p_status(&status);
                             break;
                         }
@@ -347,7 +422,7 @@ impl P2pManager {
                         }
                     }
                     PeerEvent::PeerAuth { pk, sig } => {
-                        if status.authenticated || status.security_error.is_some() {
+                        if peer_verified || status.security_error.is_some() {
                             continue;
                         }
                         let Some((local, remote)) = &fingerprints else {
@@ -372,34 +447,48 @@ impl P2pManager {
                         match verdict {
                             Ok(trust) => {
                                 info!(%request_id, ?trust, "viewer autenticado");
-                                status.authenticated = true;
+                                peer_verified = true;
                                 status.first_contact = trust == Trust::New;
-                                if video.is_none() {
-                                    match platform
-                                        .start_video(video_sender.clone(), control_sender.clone())
-                                    {
-                                        Ok(stream) => {
-                                            info!(%request_id, "transmissão da tela iniciada");
-                                            video = Some(stream);
-                                            status.sharing = true;
-                                        }
-                                        Err(err) => warn!(%err, "tela não será transmitida"),
-                                    }
-                                }
-                                if status.control && clipboard.is_none() {
-                                    clipboard = Some(start_clipboard(&clip_tx));
-                                }
-                                if input.is_none() {
-                                    // A entrada mira o monitor que a captura estiver transmitindo.
-                                    let area =
-                                        video.as_ref().map(VideoStream::area).unwrap_or_default();
-                                    input = Some(kr_core::input::InputController::new(
-                                        platform.input(area),
-                                    ));
+                                if needs_password {
+                                    info!(%request_id, "aguardando a senha de acesso não assistido");
+                                    unlock_deadline =
+                                        Some(tokio::time::Instant::now() + UNLOCK_TIMEOUT);
+                                } else {
+                                    authorize!();
                                 }
                             }
                             Err(reason) => {
                                 fail(&mut status, reason);
+                                app.p2p_status(&status);
+                                break;
+                            }
+                        }
+                    }
+                    PeerEvent::Unlock(password) => {
+                        if !needs_password || !peer_verified || status.authenticated {
+                            continue;
+                        }
+                        // Argon2 é lento de propósito: fora das threads do runtime.
+                        let u = unattended.clone();
+                        let verdict = tokio::task::spawn_blocking(move || u.verify(&password))
+                            .await
+                            .unwrap_or_else(|e| Err(e.to_string()));
+                        match verdict {
+                            Ok(()) => {
+                                info!(%request_id, "senha de acesso não assistido conferida");
+                                unlock_deadline = None;
+                                authorize!();
+                            }
+                            Err(reason) => {
+                                control_sender
+                                    .send(&ControlMessage::Denied {
+                                        reason: reason.clone(),
+                                    })
+                                    .await;
+                                fail(
+                                    &mut status,
+                                    format!("acesso não assistido recusado: {reason}"),
+                                );
                                 app.p2p_status(&status);
                                 break;
                             }

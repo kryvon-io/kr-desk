@@ -71,6 +71,8 @@ export function useSignaling() {
 
   /** Pedido feito por este computador (para casar `connect_accepted` e sinais). */
   const outgoingId = useRef<string | null>(null);
+  /** Senha de acesso não assistido do pedido em andamento (só em memória). */
+  const outgoingPassword = useRef<{ requestId: string; password: string } | null>(null);
   /** Conexão WebRTC quando este computador é o viewer. */
   const viewer = useRef<{ requestId: string; peer: ViewerPeer } | null>(null);
   /** Vídeo da tela remota (viewer) e a conexão que o recebe. */
@@ -130,6 +132,11 @@ export function useSignaling() {
           },
           onVerificationCode: (code) => update({ verificationCode: code }),
           onPermissions: (control) => update({ control }),
+          onDenied: (reason) => {
+            closeViewer(requestId);
+            dispatch({ type: "session_denied", requestId, reason });
+            invoke("end_session", { requestId }).catch(() => undefined);
+          },
           onClipboard: (text) => {
             invoke("write_clipboard", { text }).catch((err: unknown) =>
               console.warn("falha ao escrever na área de transferência", err),
@@ -168,9 +175,20 @@ export function useSignaling() {
             setRemoteCursor(cursorVisible.current ? cursorShape.current : "none");
           },
         },
-        { auth: { requestId, crypto: tauriSessionCrypto(peerId, peerPublicKey) } },
+        {
+          auth: {
+            requestId,
+            crypto: tauriSessionCrypto(peerId, peerPublicKey),
+            password:
+              outgoingPassword.current?.requestId === requestId
+                ? outgoingPassword.current.password
+                : undefined,
+          },
+        },
       );
       viewer.current = { requestId, peer };
+      // A senha já foi entregue à conexão; não fica guardada aqui.
+      if (outgoingPassword.current?.requestId === requestId) outgoingPassword.current = null;
       peer.start().catch((err: unknown) => {
         console.warn("falha ao iniciar a conexão P2P", err);
         update({ state: "failed" });
@@ -248,11 +266,16 @@ export function useSignaling() {
     };
   }, [tauri, startViewer, closeViewer]);
 
-  const connectTo = useCallback(async (targetId: string) => {
+  const connectTo = useCallback(async (targetId: string, password?: string) => {
     dispatch({ type: "connect_started", targetId });
+    outgoingPassword.current = null;
     try {
-      const requestId = await invoke<string>("connect_to", { targetId });
+      const requestId = await invoke<string>("connect_to", {
+        targetId,
+        unattended: Boolean(password),
+      });
       outgoingId.current = requestId;
+      if (password) outgoingPassword.current = { requestId, password };
       dispatch({ type: "connect_sent", requestId, targetId });
     } catch (err) {
       dispatch({ type: "connect_failed", message: errorMessage(err) });

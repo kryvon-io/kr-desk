@@ -345,6 +345,7 @@ class Connection {
       from_id: me.id,
       from_name: me.name,
       from_public_key: me.publicKey,
+      ...(msg.unattended === true ? { unattended: true as const } : {}),
     });
     this.send({ type: "connect_pending", request_id: rid });
     this.hub.audit(() => this.hub.deps.store.logSession(rid, msg.target_id, me.id));

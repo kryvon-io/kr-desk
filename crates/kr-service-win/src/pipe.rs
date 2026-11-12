@@ -1,11 +1,12 @@
 //! Named pipe entre o app e o agente.
 
 use std::io::{self, Read, Write};
+use std::time::{Duration, Instant};
 
 use tracing::warn;
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_BROKEN_PIPE, ERROR_NO_DATA, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, HANDLE,
-    HLOCAL, INVALID_HANDLE_VALUE, LocalFree,
+    CloseHandle, ERROR_BROKEN_PIPE, ERROR_FILE_NOT_FOUND, ERROR_NO_DATA, ERROR_PIPE_BUSY,
+    ERROR_PIPE_CONNECTED, HANDLE, HLOCAL, INVALID_HANDLE_VALUE, LocalFree,
 };
 use windows::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
@@ -18,9 +19,8 @@ use windows::Win32::Storage::FileSystem::{
 };
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
-    GetNamedPipeClientSessionId, GetNamedPipeServerProcessId, PIPE_READMODE_BYTE,
-    PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
-    WaitNamedPipeW,
+    GetNamedPipeClientSessionId, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
+    PIPE_UNLIMITED_INSTANCES, PIPE_WAIT, WaitNamedPipeW,
 };
 use windows::core::PCWSTR;
 
@@ -64,6 +64,71 @@ unsafe impl Send for PipeStream {}
 impl PipeStream {
     fn raw(&self) -> HANDLE {
         self.handle
+    }
+
+    /// Servidor: o usuário do outro lado é administrador deste computador?
+    /// Conta o grupo Administradores mesmo quando o UAC o deixa inativo no
+    /// token (app aberto sem "Executar como administrador").
+    pub(crate) fn client_is_admin(&self) -> bool {
+        use windows::Win32::Security::{
+            CreateWellKnownSid, EqualSid, GetTokenInformation, PSID, TOKEN_GROUPS, TOKEN_QUERY,
+            TokenGroups, WinBuiltinAdministratorsSid,
+        };
+        use windows::Win32::System::Threading::{
+            OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        let mut pid = 0u32;
+        // SAFETY: destinos válidos; handles fechados por `Owned`; o buffer de
+        // grupos vive até o fim da comparação.
+        unsafe {
+            if GetNamedPipeClientProcessId(self.raw(), &mut pid).is_err() {
+                return false;
+            }
+            let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+                return false;
+            };
+            let process = crate::util::Owned(process);
+            let mut token = HANDLE::default();
+            if OpenProcessToken(process.0, TOKEN_QUERY, &mut token).is_err() {
+                return false;
+            }
+            let token = crate::util::Owned(token);
+            let mut needed = 0u32;
+            let _ = GetTokenInformation(token.0, TokenGroups, None, 0, &mut needed);
+            if needed == 0 {
+                return false;
+            }
+            // u64 para o alinhamento de TOKEN_GROUPS.
+            let mut buf = vec![0u64; (needed as usize).div_ceil(8)];
+            if GetTokenInformation(
+                token.0,
+                TokenGroups,
+                Some(buf.as_mut_ptr().cast()),
+                needed,
+                &mut needed,
+            )
+            .is_err()
+            {
+                return false;
+            }
+            let mut admin = [0u8; 68];
+            let mut admin_len = admin.len() as u32;
+            if CreateWellKnownSid(
+                WinBuiltinAdministratorsSid,
+                None,
+                Some(PSID(admin.as_mut_ptr().cast())),
+                &mut admin_len,
+            )
+            .is_err()
+            {
+                return false;
+            }
+            let groups = &*(buf.as_ptr() as *const TOKEN_GROUPS);
+            let list =
+                std::slice::from_raw_parts(groups.Groups.as_ptr(), groups.GroupCount as usize);
+            list.iter()
+                .any(|g| EqualSid(g.Sid, PSID(admin.as_mut_ptr().cast())).is_ok())
+        }
     }
 }
 
@@ -150,6 +215,10 @@ pub(crate) struct PipeServer {
     session: u32,
     image: String,
     clients: Clients,
+    /// Próxima instância, criada logo depois de cada conexão: sem ela, um
+    /// cliente que abre duas conexões seguidas (o app abre comandos +
+    /// eventos) encontra o pipe "inexistente" no intervalo e desiste.
+    next: Option<PipeStream>,
 }
 
 // SAFETY: o descritor de segurança é memória comum do processo, usada por
@@ -176,12 +245,33 @@ impl PipeServer {
             session: own_session()?,
             image: own_image()?,
             clients,
+            next: None,
         })
     }
 
     /// Espera o próximo cliente. Recusa (e devolve erro) quem não for o
     /// `kr-desk.exe` instalado rodando nesta mesma sessão.
     pub fn accept(&mut self) -> io::Result<PipeStream> {
+        let stream = match self.next.take() {
+            Some(s) => s,
+            None => self.create_instance()?,
+        };
+        // SAFETY: handle válido; operação síncrona.
+        if let Err(e) = unsafe { ConnectNamedPipe(stream.raw(), None) }
+            && e.code() != ERROR_PIPE_CONNECTED.to_hresult()
+        {
+            return Err(win_err("ConnectNamedPipe", e));
+        }
+        // Já deixa a próxima instância esperando antes de conferir o cliente.
+        match self.create_instance() {
+            Ok(next) => self.next = Some(next),
+            Err(err) => warn!(%err, "não foi possível preparar a próxima instância do pipe"),
+        }
+        self.verify_client(&stream)?;
+        Ok(stream)
+    }
+
+    fn create_instance(&mut self) -> io::Result<PipeStream> {
         let sa = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: self.descriptor.0.0,
@@ -209,18 +299,10 @@ impl PipeServer {
             return Err(io::Error::last_os_error());
         }
         self.first = false;
-        let stream = PipeStream {
+        Ok(PipeStream {
             handle,
             server: true,
-        };
-        // SAFETY: handle válido; operação síncrona.
-        if let Err(e) = unsafe { ConnectNamedPipe(stream.raw(), None) }
-            && e.code() != ERROR_PIPE_CONNECTED.to_hresult()
-        {
-            return Err(win_err("ConnectNamedPipe", e));
-        }
-        self.verify_client(&stream)?;
-        Ok(stream)
+        })
     }
 
     fn verify_client(&self, stream: &PipeStream) -> io::Result<()> {
@@ -247,6 +329,37 @@ impl PipeServer {
     }
 }
 
+/// O dono do pipe (quem o criou) é SYSTEM ou Administradores?
+fn owned_by_system(stream: &PipeStream) -> bool {
+    use windows::Win32::Security::Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT};
+    use windows::Win32::Security::{
+        IsWellKnownSid, OWNER_SECURITY_INFORMATION, PSID, WinBuiltinAdministratorsSid,
+        WinLocalSystemSid,
+    };
+    let mut owner = PSID::default();
+    let mut sd = PSECURITY_DESCRIPTOR::default();
+    // SAFETY: handle válido; `owner` aponta para dentro de `sd`, liberado no fim.
+    unsafe {
+        let err = GetSecurityInfo(
+            stream.raw(),
+            SE_KERNEL_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            Some(&mut owner),
+            None,
+            None,
+            None,
+            Some(&mut sd),
+        );
+        if err.is_err() || owner.0.is_null() {
+            return false;
+        }
+        let ok = IsWellKnownSid(owner, WinLocalSystemSid).as_bool()
+            || IsWellKnownSid(owner, WinBuiltinAdministratorsSid).as_bool();
+        LocalFree(Some(HLOCAL(sd.0)));
+        ok
+    }
+}
+
 fn denied(msg: String) -> io::Error {
     io::Error::new(io::ErrorKind::PermissionDenied, msg)
 }
@@ -254,7 +367,8 @@ fn denied(msg: String) -> io::Error {
 /// Conecta ao agente desta sessão. Falha se o serviço não estiver instalado
 /// (ou o agente ainda não subiu) — o app então captura por conta própria.
 pub fn connect_agent() -> io::Result<PipeStream> {
-    connect(&agent_pipe_name(own_session()?))
+    // Paciência curta: sem o serviço, o app não pode atrasar o início da sessão.
+    connect(&agent_pipe_name(own_session()?), Duration::from_millis(300))
 }
 
 /// Serviço: conecta ao agente da sessão que está no console agora.
@@ -267,17 +381,19 @@ pub fn connect_console_agent() -> io::Result<PipeStream> {
             "nenhuma sessão no console",
         ));
     }
-    connect(&agent_pipe_name(session))
+    connect(&agent_pipe_name(session), Duration::from_secs(2))
 }
 
 /// App: conecta ao serviço (falha se ele não estiver rodando).
 pub fn connect_service() -> io::Result<PipeStream> {
-    connect(SERVICE_PIPE)
+    connect(SERVICE_PIPE, Duration::from_secs(2))
 }
 
-fn connect(name: &str) -> io::Result<PipeStream> {
+/// Conecta ao pipe `name`, tentando de novo por até `patience` enquanto o
+/// servidor prepara uma instância livre.
+fn connect(name: &str, patience: Duration) -> io::Result<PipeStream> {
     let name = wide(name);
-    let mut waited = false;
+    let deadline = Instant::now() + patience;
     let stream = loop {
         // SAFETY: nome terminado em zero; `SECURITY_IDENTIFICATION` impede o
         // servidor de agir em nosso nome.
@@ -298,10 +414,20 @@ fn connect(name: &str) -> io::Result<PipeStream> {
                     server: false,
                 };
             }
-            Err(e) if e.code() == ERROR_PIPE_BUSY.to_hresult() && !waited => {
-                waited = true;
-                // SAFETY: nome terminado em zero.
-                let _ = unsafe { WaitNamedPipeW(PCWSTR(name.as_ptr()), 2000) };
+            Err(e)
+                if (e.code() == ERROR_PIPE_BUSY.to_hresult()
+                    || e.code() == ERROR_FILE_NOT_FOUND.to_hresult())
+                    && Instant::now() < deadline =>
+            {
+                if e.code() == ERROR_PIPE_BUSY.to_hresult() {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    // SAFETY: nome terminado em zero.
+                    let _ = unsafe {
+                        WaitNamedPipeW(PCWSTR(name.as_ptr()), left.as_millis().max(1) as u32)
+                    };
+                } else {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
             }
             Err(e) => {
                 return Err(io::Error::new(
@@ -311,16 +437,14 @@ fn connect(name: &str) -> io::Result<PipeStream> {
             }
         }
     };
-    // O servidor precisa ser o nosso executável (e não um impostor que criou
-    // o pipe antes do agente).
-    let mut pid = 0u32;
-    // SAFETY: destino válido.
-    unsafe { GetNamedPipeServerProcessId(stream.raw(), &mut pid) }
-        .map_err(|e| win_err("GetNamedPipeServerProcessId", e))?;
-    let image = process_image(pid)?;
-    if image != own_image()? {
-        warn!(%image, "pipe do agente aberto por outro programa; ignorado");
-        return Err(denied(format!("servidor do pipe não é o KR Desk: {image}")));
+    // O servidor precisa ser o serviço/agente (SYSTEM), não um impostor que
+    // criou o pipe antes. Não dá para conferir o executável dele: um app
+    // comum não tem permissão de abrir processos do SYSTEM. Mas o dono do
+    // pipe é quem o criou, e um processo comum não consegue criá-lo com dono
+    // SYSTEM (nem Administradores, sem elevação).
+    if !owned_by_system(&stream) {
+        warn!("pipe do KR Desk criado por outro programa; ignorado");
+        return Err(denied("o pipe não pertence ao serviço do KR Desk".into()));
     }
     Ok(stream)
 }

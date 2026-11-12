@@ -8,6 +8,7 @@ import { RemoteScreen } from "@/components/remote-screen";
 import { SecurityAlertDialog } from "@/components/security-alert-dialog";
 import { SessionBanner } from "@/components/session-banner";
 import { StatusBadge } from "@/components/status-badge";
+import { UnattendedCard } from "@/components/unattended-card";
 import { fetchAppInfo, type AppInfo } from "@/lib/app-info";
 import { useSignaling } from "@/lib/use-signaling";
 
@@ -104,6 +105,7 @@ export default function App() {
           onCancel={endSession}
           onReset={resetOutgoing}
         />
+        {tauri && <UnattendedCard />}
       </div>
 
       <IncomingRequestDialog request={state.incoming[0]} onAnswer={respond} />

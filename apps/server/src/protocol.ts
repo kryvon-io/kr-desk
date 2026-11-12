@@ -24,7 +24,13 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     device_name: z.string().trim().min(1).max(64),
     app_version: z.string().min(1).max(32),
   }),
-  z.object({ type: z.literal("connect_request"), request_id: requestId, target_id: deviceId }),
+  z.object({
+    type: z.literal("connect_request"),
+    request_id: requestId,
+    target_id: deviceId,
+    /** O viewer tem a senha de acesso não assistido (enviada só pelo canal P2P). */
+    unattended: z.boolean().optional(),
+  }),
   z.object({ type: z.literal("connect_response"), request_id: requestId, accept: z.boolean() }),
   z.object({
     type: z.literal("signal"),
@@ -67,6 +73,7 @@ export type ServerMessage =
       from_id: string;
       from_name: string;
       from_public_key: string;
+      unattended?: true;
     }
   | { type: "connect_pending"; request_id: string }
   | {

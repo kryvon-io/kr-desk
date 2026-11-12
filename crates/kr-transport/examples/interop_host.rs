@@ -101,6 +101,9 @@ async fn main() {
         let mut quality = kr_core::media::quality::QualityController::new(1_500_000, 300_000, 3_000_000);
         let mut rx_reports = 0u32;
         let mut clipboard_from_viewer: Option<String> = None;
+        // Senha de acesso não assistido: só pode chegar depois da autenticação.
+        let mut unlock: Option<String> = None;
+        let mut unlock_before_auth = false;
         let mut offers = 0u32;
         let mut input = InputController::new(Recorder::default());
         let mut video: Option<VideoStream> = None;
@@ -125,6 +128,12 @@ async fn main() {
                             break Err(format!(
                                 "área de transferência do viewer não chegou: {clipboard_from_viewer:?}"
                             ));
+                        }
+                        if unlock_before_auth {
+                            break Err("viewer mandou a senha antes de o host se comprovar".to_string());
+                        }
+                        if unlock.as_deref() != Some("senha-interop") {
+                            break Err(format!("senha de acesso não assistido não chegou: {unlock:?}"));
                         }
                         if monitor_selected != Some(1) {
                             break Err("viewer não trocou de monitor".to_string());
@@ -205,6 +214,12 @@ async fn main() {
                         }
                     }
                     PeerEvent::Clipboard(text) => clipboard_from_viewer = Some(text),
+                    PeerEvent::Unlock(password) => {
+                        // O runner confere que isto não acontece no cenário de MITM.
+                        println!("UNLOCK_RECEIVED");
+                        unlock_before_auth |= !viewer_authenticated;
+                        unlock = Some(password);
+                    }
                     PeerEvent::SelectMonitor(index) => {
                         monitor_selected = Some(index);
                         if let Some(v) = &video {

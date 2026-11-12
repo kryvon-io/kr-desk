@@ -1,11 +1,12 @@
 //! Named pipe entre o app e o agente.
 
 use std::io::{self, Read, Write};
+use std::time::{Duration, Instant};
 
 use tracing::warn;
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_BROKEN_PIPE, ERROR_NO_DATA, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, HANDLE,
-    HLOCAL, INVALID_HANDLE_VALUE, LocalFree,
+    CloseHandle, ERROR_BROKEN_PIPE, ERROR_FILE_NOT_FOUND, ERROR_NO_DATA, ERROR_PIPE_BUSY,
+    ERROR_PIPE_CONNECTED, HANDLE, HLOCAL, INVALID_HANDLE_VALUE, LocalFree,
 };
 use windows::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
@@ -215,6 +216,10 @@ pub(crate) struct PipeServer {
     session: u32,
     image: String,
     clients: Clients,
+    /// Próxima instância, criada logo depois de cada conexão: sem ela, um
+    /// cliente que abre duas conexões seguidas (o app abre comandos +
+    /// eventos) encontra o pipe "inexistente" no intervalo e desiste.
+    next: Option<PipeStream>,
 }
 
 // SAFETY: o descritor de segurança é memória comum do processo, usada por
@@ -241,12 +246,33 @@ impl PipeServer {
             session: own_session()?,
             image: own_image()?,
             clients,
+            next: None,
         })
     }
 
     /// Espera o próximo cliente. Recusa (e devolve erro) quem não for o
     /// `kr-desk.exe` instalado rodando nesta mesma sessão.
     pub fn accept(&mut self) -> io::Result<PipeStream> {
+        let stream = match self.next.take() {
+            Some(s) => s,
+            None => self.create_instance()?,
+        };
+        // SAFETY: handle válido; operação síncrona.
+        if let Err(e) = unsafe { ConnectNamedPipe(stream.raw(), None) }
+            && e.code() != ERROR_PIPE_CONNECTED.to_hresult()
+        {
+            return Err(win_err("ConnectNamedPipe", e));
+        }
+        // Já deixa a próxima instância esperando antes de conferir o cliente.
+        match self.create_instance() {
+            Ok(next) => self.next = Some(next),
+            Err(err) => warn!(%err, "não foi possível preparar a próxima instância do pipe"),
+        }
+        self.verify_client(&stream)?;
+        Ok(stream)
+    }
+
+    fn create_instance(&mut self) -> io::Result<PipeStream> {
         let sa = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: self.descriptor.0.0,
@@ -274,18 +300,10 @@ impl PipeServer {
             return Err(io::Error::last_os_error());
         }
         self.first = false;
-        let stream = PipeStream {
+        Ok(PipeStream {
             handle,
             server: true,
-        };
-        // SAFETY: handle válido; operação síncrona.
-        if let Err(e) = unsafe { ConnectNamedPipe(stream.raw(), None) }
-            && e.code() != ERROR_PIPE_CONNECTED.to_hresult()
-        {
-            return Err(win_err("ConnectNamedPipe", e));
-        }
-        self.verify_client(&stream)?;
-        Ok(stream)
+        })
     }
 
     fn verify_client(&self, stream: &PipeStream) -> io::Result<()> {
@@ -319,7 +337,8 @@ fn denied(msg: String) -> io::Error {
 /// Conecta ao agente desta sessão. Falha se o serviço não estiver instalado
 /// (ou o agente ainda não subiu) — o app então captura por conta própria.
 pub fn connect_agent() -> io::Result<PipeStream> {
-    connect(&agent_pipe_name(own_session()?))
+    // Paciência curta: sem o serviço, o app não pode atrasar o início da sessão.
+    connect(&agent_pipe_name(own_session()?), Duration::from_millis(300))
 }
 
 /// Serviço: conecta ao agente da sessão que está no console agora.
@@ -332,17 +351,19 @@ pub fn connect_console_agent() -> io::Result<PipeStream> {
             "nenhuma sessão no console",
         ));
     }
-    connect(&agent_pipe_name(session))
+    connect(&agent_pipe_name(session), Duration::from_secs(2))
 }
 
 /// App: conecta ao serviço (falha se ele não estiver rodando).
 pub fn connect_service() -> io::Result<PipeStream> {
-    connect(SERVICE_PIPE)
+    connect(SERVICE_PIPE, Duration::from_secs(2))
 }
 
-fn connect(name: &str) -> io::Result<PipeStream> {
+/// Conecta ao pipe `name`, tentando de novo por até `patience` enquanto o
+/// servidor prepara uma instância livre.
+fn connect(name: &str, patience: Duration) -> io::Result<PipeStream> {
     let name = wide(name);
-    let mut waited = false;
+    let deadline = Instant::now() + patience;
     let stream = loop {
         // SAFETY: nome terminado em zero; `SECURITY_IDENTIFICATION` impede o
         // servidor de agir em nosso nome.
@@ -363,10 +384,20 @@ fn connect(name: &str) -> io::Result<PipeStream> {
                     server: false,
                 };
             }
-            Err(e) if e.code() == ERROR_PIPE_BUSY.to_hresult() && !waited => {
-                waited = true;
-                // SAFETY: nome terminado em zero.
-                let _ = unsafe { WaitNamedPipeW(PCWSTR(name.as_ptr()), 2000) };
+            Err(e)
+                if (e.code() == ERROR_PIPE_BUSY.to_hresult()
+                    || e.code() == ERROR_FILE_NOT_FOUND.to_hresult())
+                    && Instant::now() < deadline =>
+            {
+                if e.code() == ERROR_PIPE_BUSY.to_hresult() {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    // SAFETY: nome terminado em zero.
+                    let _ = unsafe {
+                        WaitNamedPipeW(PCWSTR(name.as_ptr()), left.as_millis().max(1) as u32)
+                    };
+                } else {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
             }
             Err(e) => {
                 return Err(io::Error::new(

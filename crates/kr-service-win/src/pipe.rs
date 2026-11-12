@@ -19,9 +19,8 @@ use windows::Win32::Storage::FileSystem::{
 };
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
-    GetNamedPipeClientSessionId, GetNamedPipeServerProcessId, PIPE_READMODE_BYTE,
-    PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
-    WaitNamedPipeW,
+    GetNamedPipeClientSessionId, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
+    PIPE_UNLIMITED_INSTANCES, PIPE_WAIT, WaitNamedPipeW,
 };
 use windows::core::PCWSTR;
 
@@ -330,6 +329,37 @@ impl PipeServer {
     }
 }
 
+/// O dono do pipe (quem o criou) é SYSTEM ou Administradores?
+fn owned_by_system(stream: &PipeStream) -> bool {
+    use windows::Win32::Security::Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT};
+    use windows::Win32::Security::{
+        IsWellKnownSid, OWNER_SECURITY_INFORMATION, PSID, WinBuiltinAdministratorsSid,
+        WinLocalSystemSid,
+    };
+    let mut owner = PSID::default();
+    let mut sd = PSECURITY_DESCRIPTOR::default();
+    // SAFETY: handle válido; `owner` aponta para dentro de `sd`, liberado no fim.
+    unsafe {
+        let err = GetSecurityInfo(
+            stream.raw(),
+            SE_KERNEL_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            Some(&mut owner),
+            None,
+            None,
+            None,
+            Some(&mut sd),
+        );
+        if err.is_err() || owner.0.is_null() {
+            return false;
+        }
+        let ok = IsWellKnownSid(owner, WinLocalSystemSid).as_bool()
+            || IsWellKnownSid(owner, WinBuiltinAdministratorsSid).as_bool();
+        LocalFree(Some(HLOCAL(sd.0)));
+        ok
+    }
+}
+
 fn denied(msg: String) -> io::Error {
     io::Error::new(io::ErrorKind::PermissionDenied, msg)
 }
@@ -407,16 +437,14 @@ fn connect(name: &str, patience: Duration) -> io::Result<PipeStream> {
             }
         }
     };
-    // O servidor precisa ser o nosso executável (e não um impostor que criou
-    // o pipe antes do agente).
-    let mut pid = 0u32;
-    // SAFETY: destino válido.
-    unsafe { GetNamedPipeServerProcessId(stream.raw(), &mut pid) }
-        .map_err(|e| win_err("GetNamedPipeServerProcessId", e))?;
-    let image = process_image(pid)?;
-    if image != own_image()? {
-        warn!(%image, "pipe do agente aberto por outro programa; ignorado");
-        return Err(denied(format!("servidor do pipe não é o KR Desk: {image}")));
+    // O servidor precisa ser o serviço/agente (SYSTEM), não um impostor que
+    // criou o pipe antes. Não dá para conferir o executável dele: um app
+    // comum não tem permissão de abrir processos do SYSTEM. Mas o dono do
+    // pipe é quem o criou, e um processo comum não consegue criá-lo com dono
+    // SYSTEM (nem Administradores, sem elevação).
+    if !owned_by_system(&stream) {
+        warn!("pipe do KR Desk criado por outro programa; ignorado");
+        return Err(denied("o pipe não pertence ao serviço do KR Desk".into()));
     }
     Ok(stream)
 }

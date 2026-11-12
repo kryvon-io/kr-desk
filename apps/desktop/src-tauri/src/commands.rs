@@ -48,9 +48,84 @@ pub fn signaling_status(state: State<'_, AppState>) -> SignalingStatus {
 }
 
 /// Pede acesso a outro dispositivo. Retorna o `request_id` da sessão.
+/// `unattended`: o usuário informou a senha de acesso não assistido (que vai
+/// depois, pelo canal P2P, nunca pelo servidor).
 #[tauri::command]
-pub fn connect_to(target_id: String, state: State<'_, AppState>) -> Result<String, String> {
-    state.local.connect_to(&target_id)
+pub fn connect_to(
+    target_id: String,
+    unattended: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    state
+        .local
+        .connect_to(&target_id, unattended.unwrap_or(false))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnattendedStatus {
+    pub enabled: bool,
+    /// Este usuário pode mudar a configuração (com o serviço: só administradores).
+    pub can_configure: bool,
+    /// A configuração vale para o computador (serviço) ou só para este app.
+    pub machine_wide: bool,
+}
+
+/// Situação do acesso não assistido deste computador.
+#[tauri::command]
+pub fn unattended_status(state: State<'_, AppState>) -> Result<UnattendedStatus, String> {
+    match &state.service {
+        Some(link) => {
+            let v = link.call(UiCommand::UnattendedStatus)?;
+            Ok(UnattendedStatus {
+                enabled: v.get("enabled").and_then(|b| b.as_bool()).unwrap_or(false),
+                can_configure: v
+                    .get("canConfigure")
+                    .and_then(|b| b.as_bool())
+                    .unwrap_or(false),
+                machine_wide: true,
+            })
+        }
+        None => Ok(UnattendedStatus {
+            enabled: state.local.unattended_enabled(),
+            can_configure: true,
+            machine_wide: false,
+        }),
+    }
+}
+
+/// Define a senha de acesso não assistido (e ativa).
+#[tauri::command]
+pub async fn set_unattended_password(
+    password: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    match &state.service {
+        Some(link) => {
+            let link = link.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                link.call(UiCommand::SetUnattendedPassword { password })
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map(|_| ())
+        }
+        None => {
+            let local = state.local.clone();
+            tauri::async_runtime::spawn_blocking(move || local.set_unattended_password(&password))
+                .await
+                .map_err(|e| e.to_string())?
+        }
+    }
+}
+
+/// Desativa o acesso não assistido.
+#[tauri::command]
+pub fn disable_unattended(state: State<'_, AppState>) -> Result<(), String> {
+    match &state.service {
+        Some(link) => link.call(UiCommand::DisableUnattended).map(|_| ()),
+        None => state.local.disable_unattended(),
+    }
 }
 
 /// Responde a um pedido recebido (host).

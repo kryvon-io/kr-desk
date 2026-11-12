@@ -16,7 +16,9 @@ export type ControlMessage =
   | { t: "monitors"; list: MonitorInfo[]; active: number }
   | { t: "auth"; pk: string; sig: string }
   | { t: "permissions"; control: boolean }
-  | { t: "clipboard"; text: string };
+  | { t: "clipboard"; text: string }
+  | { t: "unlock"; password: string }
+  | { t: "denied"; reason: string };
 
 /** Limite de texto da área de transferência (igual ao Rust). */
 export const MAX_CLIPBOARD_CHARS = 50_000;
@@ -97,6 +99,9 @@ export function parseControl(raw: string): ControlMessage | null {
   }
   if (o.t === "clipboard" && typeof o.text === "string" && o.text.length <= MAX_CLIPBOARD_CHARS) {
     return { t: "clipboard", text: o.text };
+  }
+  if (o.t === "denied" && typeof o.reason === "string") {
+    return { t: "denied", reason: o.reason.slice(0, 200) };
   }
   if (o.t === "permissions" && typeof o.control === "boolean") {
     return { t: "permissions", control: o.control };

@@ -120,7 +120,7 @@ ws.onopen = async () => {
         void video.play().catch(() => undefined);
       },
     },
-    { auth: { requestId: REQUEST_ID, crypto: sessionCrypto } },
+    { auth: { requestId: REQUEST_ID, crypto: sessionCrypto, password: "senha-interop" } },
   );
   ws.onmessage = (e) => {
     peer.handleSignal(JSON.parse(String(e.data)) as SignalPayload).catch((err: unknown) => {

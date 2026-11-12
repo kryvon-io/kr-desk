@@ -102,6 +102,7 @@ impl AppState {
         app: &AppHandle,
         identity: Arc<DeviceIdentity>,
         known: Arc<Mutex<KnownPeers>>,
+        data_dir: std::path::PathBuf,
     ) -> Self {
         let service = service_installed();
         if service {
@@ -117,6 +118,7 @@ impl AppState {
                 device_name: kr_host::device_name(),
                 server_url: kr_host::server_url(),
                 version: env!("CARGO_PKG_VERSION"),
+                data_dir,
             },
             Arc::new(TauriEvents {
                 app: app.clone(),

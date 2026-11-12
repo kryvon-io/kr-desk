@@ -109,12 +109,34 @@ impl HostPlatform for ServicePlatform {
     }
 }
 
+const ADMIN_ONLY: &str =
+    "Só administradores deste computador podem configurar o acesso não assistido.";
+
 fn handle_command(
     backend: &Backend,
     rt: &tokio::runtime::Handle,
+    admin: bool,
     cmd: UiCommand,
 ) -> Result<Value, String> {
     match cmd {
+        UiCommand::UnattendedStatus => Ok(json!({
+            "enabled": backend.unattended_enabled(),
+            "canConfigure": admin,
+        })),
+        UiCommand::SetUnattendedPassword { password } => {
+            if !admin {
+                return Err(ADMIN_ONLY.into());
+            }
+            backend
+                .set_unattended_password(&password)
+                .map(|()| Value::Null)
+        }
+        UiCommand::DisableUnattended => {
+            if !admin {
+                return Err(ADMIN_ONLY.into());
+            }
+            backend.disable_unattended().map(|()| Value::Null)
+        }
         UiCommand::Status => Ok(json!({
             "status": backend.status(),
             "deviceName": backend.device_name(),
@@ -160,6 +182,7 @@ pub(crate) fn start() -> io::Result<()> {
                 device_name: kr_host::device_name(),
                 server_url: kr_host::server_url(),
                 version: env!("CARGO_PKG_VERSION"),
+                data_dir: data.clone(),
             },
             hub.clone(),
             Arc::new(ServicePlatform),
@@ -181,11 +204,12 @@ pub(crate) fn start() -> io::Result<()> {
             };
             let (backend, hub, handle) = (backend.clone(), hub.clone(), handle.clone());
             std::thread::spawn(move || {
+                let admin = stream.client_is_admin();
                 let mut reader = BufReader::new(stream);
                 let result = match ui::accept(&mut reader) {
-                    Ok(Channel::Commands) => {
-                        ui::serve_commands(reader, |cmd| handle_command(&backend, &handle, cmd))
-                    }
+                    Ok(Channel::Commands) => ui::serve_commands(reader, |cmd| {
+                        handle_command(&backend, &handle, admin, cmd)
+                    }),
                     Ok(Channel::Events) => ui::serve_events(reader.into_inner(), hub.subscribe()),
                     Err(err) => Err(err),
                 };

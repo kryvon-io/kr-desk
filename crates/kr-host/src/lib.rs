@@ -12,7 +12,9 @@
 
 pub mod p2p;
 pub mod ui;
+pub mod unattended;
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use kr_core::input::InputSink;
@@ -25,6 +27,7 @@ use serde::Serialize;
 use tracing::info;
 
 pub use p2p::{P2pManager, P2pStatus, ViewerInfo};
+pub use unattended::Unattended;
 
 /// Nomes dos eventos entregues à interface (os mesmos do app).
 pub const EVENT_STATUS: &str = "signaling-status";
@@ -129,6 +132,8 @@ pub struct BackendConfig {
     pub device_name: String,
     pub server_url: String,
     pub version: &'static str,
+    /// Onde guardar a configuração de acesso não assistido.
+    pub data_dir: PathBuf,
 }
 
 /// Sinalização + sessões host. Criado com [`Backend::start`].
@@ -139,6 +144,7 @@ pub struct Backend {
     device_name: String,
     identity: Arc<DeviceIdentity>,
     known: Arc<Mutex<KnownPeers>>,
+    unattended: Arc<Unattended>,
 }
 
 /// Normaliza o ID digitado ("123 456 789" → "123456789") e valida.
@@ -188,11 +194,13 @@ impl Backend {
             config.version,
         );
         let (handle, mut rx) = kr_signaling::spawn(signaling, config.identity.clone());
+        let unattended = Arc::new(Unattended::load(&config.data_dir));
         let p2p = Arc::new(P2pManager::new(
             config.identity.clone(),
             config.known.clone(),
             events.clone(),
             platform,
+            unattended.clone(),
         ));
         let backend = Arc::new(Self {
             handle,
@@ -201,6 +209,7 @@ impl Backend {
             device_name: config.device_name,
             identity: config.identity,
             known: config.known,
+            unattended,
         });
         let this = backend.clone();
         tokio::spawn(async move {
@@ -222,6 +231,22 @@ impl Backend {
             SignalingEvent::Message(msg) => msg,
         };
         match &msg {
+            ServerMessage::IncomingRequest {
+                request_id,
+                unattended: true,
+                ..
+            } if self.unattended.enabled() => {
+                // O viewer diz ter a senha: aceita já e exige a senha pelo
+                // canal P2P antes de mostrar qualquer coisa.
+                info!(%request_id, "pedido de acesso não assistido; a senha será exigida");
+                self.p2p.require_password(request_id);
+                self.p2p.set_pending_control(request_id, true);
+                let _ = self.handle.send(ClientMessage::ConnectResponse {
+                    request_id: request_id.clone(),
+                    accept: true,
+                });
+                return;
+            }
             ServerMessage::IncomingRequest { request_id, .. } => {
                 // A interface recebe o pedido por `incoming_request`.
                 if !events.incoming_request(&msg) {
@@ -286,13 +311,15 @@ impl Backend {
     }
 
     /// Pede acesso a outro dispositivo. Retorna o `request_id` da sessão.
-    pub fn connect_to(&self, target_id: &str) -> Result<String, String> {
+    /// `unattended`: temos a senha de acesso não assistido do outro lado.
+    pub fn connect_to(&self, target_id: &str, unattended: bool) -> Result<String, String> {
         let target_id = normalize_id(target_id)?;
         let request_id = uuid::Uuid::new_v4().to_string();
         self.handle
             .send(ClientMessage::ConnectRequest {
                 request_id: request_id.clone(),
                 target_id,
+                unattended,
             })
             .map_err(|e| e.to_string())?;
         Ok(request_id)
@@ -351,6 +378,20 @@ impl Backend {
     /// Host: permite ou bloqueia o controle remoto durante a sessão.
     pub fn set_session_control(&self, request_id: &str, allow: bool) -> bool {
         self.p2p.set_control(request_id, allow)
+    }
+
+    /// O acesso não assistido está ativo?
+    pub fn unattended_enabled(&self) -> bool {
+        self.unattended.enabled()
+    }
+
+    /// Define a senha de acesso não assistido (e ativa). Lento (Argon2).
+    pub fn set_unattended_password(&self, password: &str) -> Result<(), String> {
+        self.unattended.set_password(password)
+    }
+
+    pub fn disable_unattended(&self) -> Result<(), String> {
+        self.unattended.disable()
     }
 
     /// Desconecta da sinalização (o app está fechando).

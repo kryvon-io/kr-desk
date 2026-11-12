@@ -55,6 +55,13 @@ pub enum UiCommand {
         request_id: String,
         allow: bool,
     },
+    /// `{"enabled": bool}`.
+    UnattendedStatus,
+    /// Só administradores deste computador (o serviço confere).
+    SetUnattendedPassword {
+        password: String,
+    },
+    DisableUnattended,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -337,6 +344,7 @@ mod tests {
             from_id: "123456789".into(),
             from_name: "PC".into(),
             from_public_key: "k".into(),
+            unattended: false,
         };
         // Ninguém conectado: o pedido seria recusado.
         assert!(!hub.incoming_request(&request));

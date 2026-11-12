@@ -1,4 +1,4 @@
-import { CircleAlert, CircleCheck, Loader2, PlugZap, X } from "lucide-react";
+import { CircleAlert, CircleCheck, KeyRound, Loader2, PlugZap, X } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,8 @@ interface Props {
   online: boolean;
   /** Já existe uma sessão ativa: só uma por vez nesta etapa. */
   inSession: boolean;
-  onConnect: (targetId: string) => void;
+  /** `password`: senha de acesso não assistido (entra sem ninguém aceitar). */
+  onConnect: (targetId: string, password?: string) => void;
   onCancel: (requestId: string) => void;
   onReset: () => void;
 }
@@ -18,12 +19,16 @@ interface Props {
 /** Formulário para pedir acesso a outro computador e acompanhar o pedido. */
 export function ConnectCard({ outgoing, online, inSession, onConnect, onCancel, onReset }: Props) {
   const [value, setValue] = useState("");
+  const [password, setPassword] = useState("");
+  const [usePassword, setUsePassword] = useState(false);
   const digits = sanitizeIdInput(value);
   const busy = outgoing.kind === "sending" || outgoing.kind === "pending";
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (digits.length === 9 && online && !busy && !inSession) onConnect(digits);
+    if (digits.length === 9 && online && !busy && !inSession) {
+      onConnect(digits, usePassword && password ? password : undefined);
+    }
   }
 
   return (
@@ -52,6 +57,41 @@ export function ConnectCard({ outgoing, online, inSession, onConnect, onCancel, 
           Conectar
         </Button>
       </form>
+
+      {usePassword ? (
+        <div className="mt-2 flex gap-2">
+          <Input
+            type="password"
+            autoComplete="off"
+            placeholder="Senha de acesso não assistido"
+            aria-label="Senha de acesso não assistido"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={busy}
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Conectar sem senha"
+            title="Conectar sem senha (o outro lado precisa aceitar)"
+            onClick={() => {
+              setUsePassword(false);
+              setPassword("");
+            }}
+          >
+            <X />
+          </Button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+          onClick={() => setUsePassword(true)}
+        >
+          <KeyRound className="size-3.5" />
+          Tenho a senha de acesso não assistido
+        </button>
+      )}
 
       <div className="mt-3 min-h-6 text-sm" aria-live="polite">
         {outgoing.kind === "pending" && (

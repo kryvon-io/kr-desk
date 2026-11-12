@@ -65,6 +65,71 @@ impl PipeStream {
     fn raw(&self) -> HANDLE {
         self.handle
     }
+
+    /// Servidor: o usuário do outro lado é administrador deste computador?
+    /// Conta o grupo Administradores mesmo quando o UAC o deixa inativo no
+    /// token (app aberto sem "Executar como administrador").
+    pub(crate) fn client_is_admin(&self) -> bool {
+        use windows::Win32::Security::{
+            CreateWellKnownSid, EqualSid, GetTokenInformation, PSID, TOKEN_GROUPS, TOKEN_QUERY,
+            TokenGroups, WinBuiltinAdministratorsSid,
+        };
+        use windows::Win32::System::Threading::{
+            OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        let mut pid = 0u32;
+        // SAFETY: destinos válidos; handles fechados por `Owned`; o buffer de
+        // grupos vive até o fim da comparação.
+        unsafe {
+            if GetNamedPipeClientProcessId(self.raw(), &mut pid).is_err() {
+                return false;
+            }
+            let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+                return false;
+            };
+            let process = crate::util::Owned(process);
+            let mut token = HANDLE::default();
+            if OpenProcessToken(process.0, TOKEN_QUERY, &mut token).is_err() {
+                return false;
+            }
+            let token = crate::util::Owned(token);
+            let mut needed = 0u32;
+            let _ = GetTokenInformation(token.0, TokenGroups, None, 0, &mut needed);
+            if needed == 0 {
+                return false;
+            }
+            // u64 para o alinhamento de TOKEN_GROUPS.
+            let mut buf = vec![0u64; (needed as usize).div_ceil(8)];
+            if GetTokenInformation(
+                token.0,
+                TokenGroups,
+                Some(buf.as_mut_ptr().cast()),
+                needed,
+                &mut needed,
+            )
+            .is_err()
+            {
+                return false;
+            }
+            let mut admin = [0u8; 68];
+            let mut admin_len = admin.len() as u32;
+            if CreateWellKnownSid(
+                WinBuiltinAdministratorsSid,
+                None,
+                Some(PSID(admin.as_mut_ptr().cast())),
+                &mut admin_len,
+            )
+            .is_err()
+            {
+                return false;
+            }
+            let groups = &*(buf.as_ptr() as *const TOKEN_GROUPS);
+            let list =
+                std::slice::from_raw_parts(groups.Groups.as_ptr(), groups.GroupCount as usize);
+            list.iter()
+                .any(|g| EqualSid(g.Sid, PSID(admin.as_mut_ptr().cast())).is_ok())
+        }
+    }
 }
 
 impl Read for PipeStream {

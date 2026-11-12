@@ -72,6 +72,11 @@ pub enum ClientMessage {
         request_id: String,
         /// ID de 9 dígitos do dispositivo alvo.
         target_id: String,
+        /// O viewer tem a senha de acesso não assistido (enviada depois, pelo
+        /// canal P2P cifrado; o servidor nunca a vê). Se o host tiver o acesso
+        /// não assistido ativo, aceita sem perguntar e exige a senha.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        unattended: bool,
     },
     /// Host aceita ou recusa um pedido recebido.
     ConnectResponse { request_id: String, accept: bool },
@@ -104,6 +109,9 @@ pub enum ServerMessage {
         from_id: String,
         from_name: String,
         from_public_key: String,
+        /// Ver `ClientMessage::ConnectRequest::unattended`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        unattended: bool,
     },
     /// O pedido foi entregue ao host e aguarda resposta (somente no viewer).
     ConnectPending {

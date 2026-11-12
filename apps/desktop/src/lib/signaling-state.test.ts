@@ -40,6 +40,21 @@ describe("lado de quem acessa (viewer)", () => {
     expect(s.active?.p2p.state).toBe("connecting");
   });
 
+  it("acesso recusado pelo host (senha errada) encerra a sessão com o motivo", () => {
+    const s = run(
+      ...pending,
+      msg({
+        type: "connect_accepted",
+        request_id: RID,
+        peer_id: "444555666",
+        peer_public_key: "k",
+      }),
+      { type: "session_denied", requestId: RID, reason: "Senha incorreta." },
+    );
+    expect(s.active).toBeNull();
+    expect(s.outgoing).toEqual({ kind: "failed", message: "Acesso recusado: Senha incorreta." });
+  });
+
   it("recusa e timeout mostram mensagens diferentes", () => {
     const declined = run(
       ...pending,

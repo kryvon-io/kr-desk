@@ -133,6 +133,8 @@ pub enum PeerEvent {
     RxReport(kr_core::media::quality::RxReport),
     /// Texto copiado no viewer.
     Clipboard(String),
+    /// Senha de acesso não assistido enviada pelo viewer.
+    Unlock(String),
     /// Entrada remota (mouse/teclado) do viewer. Ao fechar o canal de
     /// controle, chega um `ReleaseAll`.
     Input(ControlMessage),
@@ -358,6 +360,11 @@ async fn control_loop(dc: Arc<dyn DataChannel>, shared: Arc<Shared>) {
                     Ok(ControlMessage::Clipboard { text }) => {
                         if text.chars().count() <= kr_proto::control::MAX_CLIPBOARD_CHARS {
                             shared.emit(PeerEvent::Clipboard(text));
+                        }
+                    }
+                    Ok(ControlMessage::Unlock { password }) => {
+                        if password.chars().count() <= kr_proto::control::MAX_PASSWORD_CHARS {
+                            shared.emit(PeerEvent::Unlock(password));
                         }
                     }
                     Ok(msg) if is_input(&msg) => shared.emit(PeerEvent::Input(msg)),

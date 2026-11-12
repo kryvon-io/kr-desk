@@ -88,7 +88,12 @@ async function scenario(tamper) {
   // Estado final (o teste de reconexão termina depois do "ok").
   viewer = (await page.evaluate(() => window.__interop).catch(() => undefined)) ?? viewer;
   await page.close();
-  return { hostCode, viewer, hostLine: lines.find((l) => l.startsWith("INTEROP_")) };
+  return {
+    hostCode,
+    viewer,
+    hostLine: lines.find((l) => l.startsWith("INTEROP_")),
+    unlockReceived: lines.includes("UNLOCK_RECEIVED"),
+  };
 }
 
 const normal = await scenario(false);
@@ -109,7 +114,11 @@ if (mitm.viewer?.ok || !String(mitm.viewer?.error ?? "").startsWith("auth:")) {
   console.error("FALHOU: o viewer aceitou um host com fingerprint adulterado");
   failed = true;
 }
+if (mitm.unlockReceived) {
+  console.error("FALHOU: o viewer mandou a senha de acesso não assistido a um host não comprovado");
+  failed = true;
+}
 if (failed) process.exit(1);
 console.log(
-  "OK: Rust (webrtc-rs) e Chrome se autenticaram, conectaram ponto a ponto, mediram a latência, o Chrome decodificou o vídeo H.264, entrada e cursor chegaram, a conexão voltou após reiniciar o ICE — e o fingerprint adulterado foi recusado.",
+  "OK: Rust (webrtc-rs) e Chrome se autenticaram, conectaram ponto a ponto, mediram a latência, o Chrome decodificou o vídeo H.264, entrada e cursor chegaram, a senha de acesso não assistido só foi enviada ao host comprovado, a conexão voltou após reiniciar o ICE — e o fingerprint adulterado foi recusado (sem receber a senha).",
 );

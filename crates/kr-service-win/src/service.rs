@@ -110,6 +110,9 @@ unsafe extern "system" fn service_main(_argc: u32, _argv: *mut PWSTR) {
     let _ = STATUS.set(StatusHandle(handle));
     set_status(SERVICE_START_PENDING);
     allow_software_sas();
+    if let Err(err) = crate::host::start() {
+        error!(%err, "host do serviço não iniciou");
+    }
     set_status(SERVICE_RUNNING);
     info!(version = env!("CARGO_PKG_VERSION"), "serviço iniciado");
     supervise();

@@ -1,12 +1,11 @@
 //! Entrada remota.
 //!
-//! - **Host:** [`host_controller`] cria o `InputController` que aplica mouse e
-//!   teclado do viewer (`SendInput` no Windows) e solta tudo ao encerrar.
+//! - **Host:** [`host_sink`] é o destino da entrada do viewer (`SendInput` no
+//!   Windows, ou o agente do serviço).
 //! - **Viewer:** [`KeyboardCapture`] instala o hook de teclado do Windows. Com
 //!   a tela remota aberta e a janela em primeiro plano, cada tecla (inclusive
 //!   Win e Alt+Tab) vira o evento `viewer-key` para a interface mandar ao host.
 
-use kr_core::input::InputController;
 #[cfg(not(windows))]
 use kr_core::input::InputSink;
 #[cfg(not(windows))]
@@ -88,10 +87,10 @@ impl kr_core::input::InputSink for HostSink {
 #[cfg(not(windows))]
 pub type HostSink = LogSink;
 
-/// Controlador do host; `area` diz qual monitor está sendo transmitido.
+/// Destino da entrada no host; `area` diz qual monitor está sendo transmitido.
 #[cfg(windows)]
-pub fn host_controller(area: kr_core::media::SharedArea) -> InputController<HostSink> {
-    let sink = match kr_core::agent::AgentInputSink::connect(
+pub fn host_sink(area: kr_core::media::SharedArea) -> HostSink {
+    match kr_core::agent::AgentInputSink::connect(
         Box::new(kr_service_win::connect_agent),
         area.clone(),
     ) {
@@ -103,13 +102,12 @@ pub fn host_controller(area: kr_core::media::SharedArea) -> InputController<Host
             tracing::info!(%err, "serviço indisponível; entrada remota neste processo");
             HostSink::Local(kr_input_win::SendInputSink::new(area))
         }
-    };
-    InputController::new(sink)
+    }
 }
 
 #[cfg(not(windows))]
-pub fn host_controller(_area: kr_core::media::SharedArea) -> InputController<HostSink> {
-    InputController::new(HostSink::default())
+pub fn host_sink(_area: kr_core::media::SharedArea) -> HostSink {
+    HostSink::default()
 }
 
 /// Hook de teclado do viewer (só no Windows).

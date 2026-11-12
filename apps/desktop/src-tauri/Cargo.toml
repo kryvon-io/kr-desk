@@ -16,6 +16,7 @@ tauri-build.workspace = true
 
 [dependencies]
 kr-core.workspace = true
+kr-host.workspace = true
 kr-identity.workspace = true
 kr-proto.workspace = true
 kr-signaling.workspace = true

@@ -1,11 +1,10 @@
 //! Binário Tauri do KR Desk. Mantido fino: a lógica fica nos crates `kr-*`.
 
+mod backend;
 mod commands;
 mod logging;
-mod p2p;
 mod remote_input;
 mod screen;
-mod signaling;
 mod tray;
 
 use std::sync::Arc;
@@ -77,12 +76,7 @@ pub fn run() {
 
             // Chaves dos computadores já conectados (TOFU), usadas nos dois papéis.
             let known = Arc::new(std::sync::Mutex::new(KnownPeers::load(&data_dir)));
-            app.manage(commands::Session {
-                identity: identity.clone(),
-                known: known.clone(),
-            });
-            let bridge = signaling::start(app.handle().clone(), identity, known);
-            app.manage(bridge);
+            app.manage(backend::AppState::start(app.handle(), identity, known));
             tray::create(app.handle())?;
             app.manage(remote_input::KeyboardCapture::install(app.handle()));
             app.manage(remote_input::ViewerClipboard::default());

@@ -2,9 +2,10 @@
 //!
 //! Quando o usuário aceita um pedido, o servidor manda `session_ready`; aqui
 //! criamos um [`HostPeer`] e ligamos seus sinais à sinalização e seu estado à
-//! interface (evento `p2p-status`). Quando o canal P2P abre, a tela começa a
-//! ser transmitida ([`crate::screen`]) — mas só depois de o viewer provar a
-//! identidade (fingerprints DTLS assinados, ver `kr_proto::session`).
+//! interface ([`BackendEvents::p2p_status`]). Quando o canal P2P abre, a tela
+//! começa a ser transmitida ([`HostPlatform::start_video`]) — mas só depois
+//! de o viewer provar a identidade (fingerprints DTLS assinados, ver
+//! `kr_proto::session`).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,11 +19,10 @@ use kr_proto::{ClientMessage, IceServer};
 use kr_signaling::SignalingHandle;
 use kr_transport::{HostPeer, PeerEvent, PeerState, Route, VideoStream};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
 use tokio::sync::{Mutex, mpsc, watch};
 use tracing::{info, warn};
 
-pub const EVENT_P2P: &str = "p2p-status";
+use crate::{BackendEvents, HostPlatform, RemoteClipboard};
 
 /// Intervalo para verificar se a transmissão da tela continua viva.
 const VIDEO_CHECK: Duration = Duration::from_secs(2);
@@ -86,6 +86,8 @@ pub struct ViewerInfo {
 }
 
 pub struct P2pManager {
+    events: Arc<dyn BackendEvents>,
+    platform: Arc<dyn HostPlatform>,
     identity: Arc<DeviceIdentity>,
     known: Arc<std::sync::Mutex<KnownPeers>>,
     peers: Mutex<HashMap<String, Arc<HostPeer>>>,
@@ -96,8 +98,15 @@ pub struct P2pManager {
 }
 
 impl P2pManager {
-    pub fn new(identity: Arc<DeviceIdentity>, known: Arc<std::sync::Mutex<KnownPeers>>) -> Self {
+    pub fn new(
+        identity: Arc<DeviceIdentity>,
+        known: Arc<std::sync::Mutex<KnownPeers>>,
+        events: Arc<dyn BackendEvents>,
+        platform: Arc<dyn HostPlatform>,
+    ) -> Self {
         Self {
+            events,
+            platform,
             identity,
             known,
             peers: Mutex::default(),
@@ -128,7 +137,6 @@ impl P2pManager {
     /// Cria a conexão do host para uma sessão aceita.
     pub async fn start_host(
         &self,
-        app: AppHandle,
         signaling: SignalingHandle,
         request_id: String,
         ice_servers: Vec<IceServer>,
@@ -147,7 +155,7 @@ impl P2pManager {
                 warn!(%err, "falha ao criar a conexão P2P");
                 let mut status = P2pStatus::new(&request_id, &viewer.peer_id, allow);
                 status.state = PeerState::Failed;
-                emit(&app, status);
+                self.events.p2p_status(&status);
                 return;
             }
         };
@@ -167,14 +175,17 @@ impl P2pManager {
 
         let identity = self.identity.clone();
         let known = self.known.clone();
+        let app = self.events.clone();
+        let platform = self.platform.clone();
         tokio::spawn(async move {
             let mut status = P2pStatus::new(&request_id, &viewer.peer_id, allow);
-            emit(&app, status.clone());
+            app.p2p_status(&status);
             let mut fingerprints: Option<(String, String)> = None;
             let mut video: Option<VideoStream> = None;
             // Criado após autenticar; solta teclas/botões ao ser descartado.
-            let mut input: Option<kr_core::input::InputController<crate::remote_input::HostSink>> =
-                None;
+            let mut input: Option<
+                kr_core::input::InputController<Box<dyn kr_core::input::InputSink + Send>>,
+            > = None;
             let mut auth_deadline: Option<tokio::time::Instant> = None;
             let mut reconnect_deadline: Option<tokio::time::Instant> = None;
             let mut quality = QualityController::new(
@@ -184,12 +195,12 @@ impl P2pManager {
             );
             // Texto copiado aqui → viewer (só com controle permitido).
             let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<String>();
-            let mut clipboard: Option<crate::remote_input::ClipboardSync> = None;
+            let mut clipboard: Option<Box<dyn RemoteClipboard>> = None;
             let start_clipboard = |tx: &mpsc::UnboundedSender<String>| {
                 let tx = tx.clone();
-                crate::remote_input::ClipboardSync::start(move |text| {
+                platform.clipboard(Box::new(move |text| {
                     let _ = tx.send(text);
-                })
+                }))
             };
             let mut check = tokio::time::interval(VIDEO_CHECK);
 
@@ -234,7 +245,7 @@ impl P2pManager {
                         }
                         control_sender.send(&ControlMessage::Permissions { control: allow }).await;
                         info!(%request_id, control = allow, "permissão de controle alterada");
-                        emit(&app, status.clone());
+                        app.p2p_status(&status);
                         continue;
                     }
                     _ = check.tick() => {
@@ -245,7 +256,7 @@ impl P2pManager {
                             });
                             status.state = PeerState::Failed;
                             status.sharing = false;
-                            emit(&app, status.clone());
+                            app.p2p_status(&status);
                             break;
                         }
                         if !status.authenticated
@@ -253,7 +264,7 @@ impl P2pManager {
                             && auth_deadline.is_some_and(|d| tokio::time::Instant::now() >= d)
                         {
                             fail(&mut status, "o outro computador não comprovou a identidade".into());
-                            emit(&app, status.clone());
+                            app.p2p_status(&status);
                             break;
                         }
                         // O pipeline pode parar sozinho (erro de captura/encoder).
@@ -261,7 +272,7 @@ impl P2pManager {
                             warn!(%request_id, "transmissão da tela parou");
                             video = None;
                             status.sharing = false;
-                            emit(&app, status.clone());
+                            app.p2p_status(&status);
                         }
                         continue;
                     }
@@ -330,7 +341,7 @@ impl P2pManager {
                             }
                             None => {
                                 fail(&mut status, "conexão sem fingerprint DTLS".into());
-                                emit(&app, status.clone());
+                                app.p2p_status(&status);
                                 break;
                             }
                         }
@@ -364,10 +375,9 @@ impl P2pManager {
                                 status.authenticated = true;
                                 status.first_contact = trust == Trust::New;
                                 if video.is_none() {
-                                    match crate::screen::start(
-                                        video_sender.clone(),
-                                        control_sender.clone(),
-                                    ) {
+                                    match platform
+                                        .start_video(video_sender.clone(), control_sender.clone())
+                                    {
                                         Ok(stream) => {
                                             info!(%request_id, "transmissão da tela iniciada");
                                             video = Some(stream);
@@ -383,12 +393,14 @@ impl P2pManager {
                                     // A entrada mira o monitor que a captura estiver transmitindo.
                                     let area =
                                         video.as_ref().map(VideoStream::area).unwrap_or_default();
-                                    input = Some(crate::remote_input::host_controller(area));
+                                    input = Some(kr_core::input::InputController::new(
+                                        platform.input(area),
+                                    ));
                                 }
                             }
                             Err(reason) => {
                                 fail(&mut status, reason);
-                                emit(&app, status.clone());
+                                app.p2p_status(&status);
                                 break;
                             }
                         }
@@ -439,7 +451,7 @@ impl P2pManager {
                     clipboard = None;
                     status.sharing = false;
                 }
-                emit(&app, status.clone());
+                app.p2p_status(&status);
             }
         });
     }
@@ -470,8 +482,4 @@ impl P2pManager {
             info!(%request_id, "conexão P2P (host) encerrada");
         }
     }
-}
-
-fn emit(app: &AppHandle, status: P2pStatus) {
-    let _ = app.emit(EVENT_P2P, status);
 }

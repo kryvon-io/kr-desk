@@ -4,7 +4,7 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
 
-use crate::signaling::Bridge;
+use crate::backend::AppState;
 
 const MENU_OPEN: &str = "open";
 const MENU_QUIT: &str = "quit";
@@ -22,8 +22,8 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             MENU_OPEN => crate::show_main_window(app),
             MENU_QUIT => {
-                if let Some(bridge) = app.try_state::<Bridge>() {
-                    bridge.handle.shutdown();
+                if let Some(state) = app.try_state::<AppState>() {
+                    state.local.shutdown();
                 }
                 app.exit(0);
             }

@@ -4,7 +4,7 @@ use std::io::{self, Read, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use kr_core::agent::{AgentBackend, serve};
+use kr_core::agent::{AgentBackend, ClipboardTarget, serve};
 use kr_core::input::InputSink;
 use kr_core::media::{CaptureError, FrameSource, SharedArea};
 use kr_proto::control::{MouseButton, NormCoord};
@@ -44,6 +44,19 @@ impl AgentBackend for Backend {
                 kr_capture_win::WgcCapture::primary().map(|c| Box::new(c) as Box<dyn FrameSource>)
             }
         }
+    }
+
+    fn open_clipboard(
+        &mut self,
+        on_change: Box<dyn Fn(String) + Send + Sync>,
+    ) -> Box<dyn ClipboardTarget> {
+        struct Target(kr_input_win::ClipboardSync);
+        impl ClipboardTarget for Target {
+            fn set_remote(&mut self, text: &str) {
+                self.0.set_remote(text);
+            }
+        }
+        Box::new(Target(kr_input_win::ClipboardSync::start(on_change)))
     }
 
     fn open_sink(&mut self, area: SharedArea) -> Box<dyn InputSink> {
@@ -103,7 +116,7 @@ pub fn run_agent() -> io::Result<()> {
     });
 
     let stdout = Arc::new(Mutex::new(io::stdout()));
-    let mut server = PipeServer::new()?;
+    let mut server = PipeServer::agent()?;
     info!("agente pronto");
     let mut failures = 0u32;
     loop {

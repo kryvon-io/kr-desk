@@ -80,7 +80,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: cargo fmt --all --check
-      - run: cargo clippy -p kr-proto -p kr-core -p kr-identity -p kr-signaling -p kr-transport -p kr-codec-soft --all-targets -- -D warnings
+      - run: cargo clippy -p kr-proto -p kr-core -p kr-identity -p kr-signaling -p kr-transport -p kr-codec-soft -p kr-host --all-targets -- -D warnings
       # O servidor TypeScript (em memória) valida o cliente Rust de ponta a ponta.
       - name: Subir servidor de sinalização local
         run: |
@@ -90,7 +90,7 @@ jobs:
       - name: Testes (inclui cliente Rust x servidor real)
         env:
           KR_SIGNALING_URL: ws://127.0.0.1:3100/ws
-        run: cargo test -p kr-proto -p kr-core -p kr-identity -p kr-signaling -p kr-transport -p kr-codec-soft -- --include-ignored
+        run: cargo test -p kr-proto -p kr-core -p kr-identity -p kr-signaling -p kr-transport -p kr-codec-soft -p kr-host -- --include-ignored
       # Host Rust (webrtc-rs) × viewer no Chrome do runner, com o mesmo código do app.
       - name: Interoperabilidade WebRTC (Rust × Chrome)
         run: pnpm test:p2p

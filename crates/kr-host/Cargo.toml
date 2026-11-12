@@ -1,0 +1,23 @@
+[package]
+name = "kr-host"
+description = "Backend de sessões do KR Desk (sinalização e host P2P), usado pelo app e pelo serviço"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kr-core.workspace = true
+kr-identity.workspace = true
+kr-proto.workspace = true
+kr-signaling.workspace = true
+kr-transport.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+tracing.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

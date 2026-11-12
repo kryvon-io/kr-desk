@@ -1,17 +1,19 @@
 name: Release (Windows)
 
-# Só roda quando VOCÊ cria uma tag de versão (ex.: git tag v0.1.0 && git push --tags,
-# ou pela tela "Releases" do GitHub). Nunca roda a partir de pull requests.
+# Só roda quando VOCÊ publica uma release na tela "Releases" do GitHub (com uma
+# tag v<versão>). Nunca roda a partir de pull requests. Os arquivos (instalador,
+# pacote assinado e latest.json) são anexados a essa mesma release.
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
 
 permissions:
   contents: read
 
 jobs:
   release:
-    name: Instalador NSIS + atualização automática → GitHub Release (rascunho)
+    name: Instalador NSIS + atualização automática → GitHub Release
+    if: startsWith(github.event.release.tag_name, 'v')
     runs-on: windows-latest
     permissions:
       contents: write # necessário para criar o Release
@@ -30,10 +32,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Conferir a versão (tag = versão do app)
         shell: bash
+        env:
+          TAG: ${{ github.event.release.tag_name }}
         run: |
           app="v$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")"
-          if [ "$app" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::A tag $GITHUB_REF_NAME não bate com a versão do app ($app)."
+          if [ "$app" != "$TAG" ]; then
+            echo "::error::A tag $TAG não bate com a versão do app ($app)."
             exit 1
           fi
       # Gera também o pacote assinado e o latest.json da atualização automática.
@@ -49,13 +53,5 @@ jobs:
           tauriScript: pnpm tauri
           args: --bundles nsis --config src-tauri/tauri.release.conf.json
           includeUpdaterJson: true
-          tagName: ${{ github.ref_name }}
-          releaseName: KR Desk ${{ github.ref_name }}
-          releaseBody: |
-            Instalador para Windows 10/11 (64 bits).
-            ⚠️ Build ainda NÃO assinada: o SmartScreen mostrará um aviso — use "Mais informações → Executar assim mesmo".
-            Quem já tem o KR Desk instalado recebe esta versão pela atualização automática.
-          # Rascunho: revise e clique em "Publish release". Só depois de
-          # publicada ela vira a "latest" que os apps instalados enxergam.
-          releaseDraft: true
-          prerelease: false
+          # Anexa à release que você publicou (sem criar outra).
+          releaseId: ${{ github.event.release.id }}

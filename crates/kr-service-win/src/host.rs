@@ -205,6 +205,7 @@ pub(crate) fn start() -> io::Result<()> {
             let (backend, hub, handle) = (backend.clone(), hub.clone(), handle.clone());
             std::thread::spawn(move || {
                 let admin = stream.client_is_admin();
+                info!(admin, "app conectado ao serviço");
                 let mut reader = BufReader::new(stream);
                 let result = match ui::accept(&mut reader) {
                     Ok(Channel::Commands) => ui::serve_commands(reader, |cmd| {

@@ -35,6 +35,14 @@ export function UnattendedCard() {
 
   useEffect(refresh, [refresh]);
 
+  // Com o serviço, a ligação com ele pode ainda estar subindo quando o app
+  // abre: tenta de novo até conseguir.
+  useEffect(() => {
+    if (status || !error) return;
+    const t = setTimeout(refresh, 3000);
+    return () => clearTimeout(t);
+  }, [status, error, refresh]);
+
   const tooShort = password.length > 0 && [...password].length < MIN_CHARS;
   const mismatch = confirm.length > 0 && confirm !== password;
   const valid = [...password].length >= MIN_CHARS && confirm === password;

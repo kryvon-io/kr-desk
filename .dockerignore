@@ -1,0 +1,16 @@
+# Contexto do build da imagem do servidor (docker build -f apps/server/Dockerfile .)
+**/node_modules
+**/dist
+target
+apps/desktop
+crates
+scripts
+docs
+.git
+.github
+**/.env
+**/.env.*
+**/*.log
+**/dump.rdb
+**/*.key
+**/*.pem

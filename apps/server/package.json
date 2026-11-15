@@ -11,7 +11,9 @@
     "test": "vitest run",
     "contract:emit": "prisma contract emit",
     "db:migrate": "prisma db migrate",
-    "vercel-build": "node scripts/vercel-build.mjs"
+    "vercel-build": "node scripts/vercel-build.mjs",
+    "build": "tsc -p tsconfig.build.json",
+    "start:prod": "node dist/index.js"
   },
   "dependencies": {
     "fastify": "catalog:",

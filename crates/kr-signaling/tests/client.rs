@@ -387,3 +387,22 @@ async fn wss_sem_servidor_tls_nao_derruba_o_processo() {
     .await;
     handle.shutdown();
 }
+
+#[tokio::test]
+async fn failover_passa_ao_proximo_servidor_da_lista() {
+    // Primeiro endereço: porta fechada (servidor fora do ar).
+    let dead = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dead_url = format!("ws://{}/ws", dead.local_addr().unwrap());
+    drop(dead);
+
+    let mut server = MockServer::start().await;
+    let urls = format!("{dead_url}, {}", server.url);
+    let (handle, mut events) = spawn(config(&urls), Arc::new(DeviceIdentity::generate().unwrap()));
+    server
+        .expect("auth no servidor alternativo", |s| {
+            matches!(s, Seen::Auth { .. })
+        })
+        .await;
+    next_event(&mut events, is_online).await;
+    handle.shutdown();
+}

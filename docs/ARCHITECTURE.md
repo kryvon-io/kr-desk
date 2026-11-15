@@ -168,7 +168,7 @@ Princípio: tudo que é específico de Windows fica em crates `*-win` atrás de 
 - **Ambiente remoto do Claude Code (Linux):** frontend, backend, crates multiplataforma, testes unitários, `cargo check` dos crates comuns.
 - **CI (`ci.yml`, a cada PR):** lint + testes em Linux; build e testes dos crates `*-win` em `windows-latest`; artefato de instalador de teste anexado ao PR.
 - **Release (`release-windows.yml`, por tag `v*`):** `tauri-action` → NSIS → assinatura → GitHub Release (rascunho) + manifesto do updater.
-- **Deploy do servidor:** integração Git da Vercel (preview por PR, produção na `main`) para `apps/server`; migrações Prisma rodam no build de produção (`scripts/vercel-build.mjs`, só na `main`).
+- **Deploy do servidor:** integração Git da Vercel (preview por PR, produção na `main`) para `apps/server`; migrações Prisma rodam no build de produção (`scripts/vercel-build.mjs`, só na `main`). Imagem Docker para VPS (Hetzner + Coolify) publicada no GHCR por `server-image.yml`; plano de migração, custos e rollback em `docs/INFRA.md`.
 - **Segredos:** na Vercel: `DATABASE_URL`, `REDIS_URL`, `CF_TURN_KEY_ID`, `CF_TURN_API_TOKEN`. No GitHub: chave privada do updater e, depois, o token do SignPath.
 - **Limite inevitável:** os testes ponta a ponta reais exigem dois PCs Windows. Cada etapa terá um checklist curto para você executar.
 
@@ -219,3 +219,4 @@ MVP utilizável = Etapas 0–6. Etapas 7–9 levam a nível de produto.
 
 - Vercel Hobby, Neon Free, Upstash Free, Cloudflare TURN (1.000 GB/mês), GitHub Actions (repo público) → **R$ 0**.
 - Observação: o plano Hobby da Vercel é para uso não comercial. Se o KR Desk virar produto pago, é preciso migrar para o Pro.
+- Auditoria de 15/11/2026: com PCs sempre conectados, a memória provisionada da Vercel passa do limite do Hobby. Recomendação: VPS Hetzner + Coolify (≈ € 6/mês). Detalhes em `docs/INFRA.md`.

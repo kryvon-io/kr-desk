@@ -38,7 +38,8 @@ export async function configureApp(app: FastifyInstance, deps: AppDeps) {
 
   await app.register(websocket, { options: { maxPayload: MAX_MESSAGE_BYTES } });
 
-  app.get("/health", async () => ({
+  // Sem log por requisição: o healthcheck do Docker/Coolify chama a cada 30 s.
+  app.get("/health", { logLevel: "warn" }, async () => ({
     status: "ok" as const,
     service: "kr-desk-signaling",
     version: SERVICE_VERSION,

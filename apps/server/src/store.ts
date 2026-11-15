@@ -9,6 +9,8 @@ export interface Device {
   publicKey: string;
   name: string;
   appVersion: string;
+  /** Última atividade registrada (ausente em dispositivos recém-criados). */
+  lastSeenAt?: Date;
 }
 
 export type SessionStatus = "pending" | "accepted" | "rejected" | "ended";
@@ -27,6 +29,8 @@ export interface DeviceStore {
 
 export class MemoryStore implements DeviceStore {
   readonly devices = new Map<string, Device>();
+  /** Quantas vezes `touch` foi chamado (testes). */
+  touches = 0;
   readonly sessions = new Map<
     string,
     { hostId: string; viewerId: string; status: SessionStatus; reason?: string }
@@ -42,13 +46,14 @@ export class MemoryStore implements DeviceStore {
     for (const d of this.devices.values()) {
       if (d.publicKey === device.publicKey) throw new Error("publicKey duplicada");
     }
-    this.devices.set(device.id, { ...device });
+    this.devices.set(device.id, { ...device, lastSeenAt: new Date() });
     return { ...device };
   }
 
   async touch(id: string, name: string, appVersion: string) {
+    this.touches++;
     const d = this.devices.get(id);
-    if (d) Object.assign(d, { name, appVersion });
+    if (d) Object.assign(d, { name, appVersion, lastSeenAt: new Date() });
   }
 
   async logSession(id: string, hostId: string, viewerId: string) {
@@ -87,12 +92,21 @@ export class PrismaStore implements DeviceStore {
 
   async findByPublicKey(publicKey: string) {
     const d = await this.m.Device.whereUnique({ publicKey }).first();
-    return d ? { id: d.id, publicKey: d.publicKey, name: d.name, appVersion: d.appVersion } : null;
+    return d
+      ? {
+          id: d.id,
+          publicKey: d.publicKey,
+          name: d.name,
+          appVersion: d.appVersion,
+          lastSeenAt: new Date(d.lastSeenAt as unknown as string | Date),
+        }
+      : null;
   }
 
   async create(device: Device) {
     try {
-      await this.m.Device.create({ ...device, lastSeenAt: new Date() });
+      const { id, publicKey, name, appVersion } = device;
+      await this.m.Device.create({ id, publicKey, name, appVersion, lastSeenAt: new Date() });
       return device;
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;

@@ -1,0 +1,107 @@
+name: Imagem do servidor
+
+# Imagem Docker do servidor de sinalização para a VPS (Coolify).
+# - PR: só compila a imagem (nada é publicado, nenhum segredo é usado).
+# - main: publica em ghcr.io/<dono>/kr-desk-server e, se configurado,
+#   avisa o Coolify para atualizar o deploy.
+on:
+  pull_request:
+    paths:
+      - "apps/server/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - ".dockerignore"
+      - ".github/workflows/server-image.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/server/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - ".dockerignore"
+      - ".github/workflows/server-image.yml"
+  workflow_dispatch:
+
+# Token somente leitura por padrão; só o job de publicação ganha packages:write.
+permissions:
+  contents: read
+
+concurrency:
+  group: server-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Compilar imagem (PR)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/server/Dockerfile
+          push: false
+          load: true
+          tags: kr-desk-server:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Teste rápido do contêiner (/health)
+        run: |
+          # Sem banco: modo dev (NODE_ENV vazio) com store em memória, só para
+          # garantir que a imagem sobe e responde.
+          docker run -d --name srv -p 3000:3000 -e NODE_ENV= kr-desk-server:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/health; then exit 0; fi
+            sleep 1
+          done
+          docker logs srv
+          exit 1
+
+  publish:
+    name: Publicar imagem (main)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      # amd64 (CX23) e arm64 (CAX11): a mesma imagem serve aos dois tipos de VPS.
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/kr-desk-server
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/server/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Avisar o Coolify (opcional)
+        env:
+          COOLIFY_WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          if [ -z "$COOLIFY_WEBHOOK_URL" ] || [ -z "$COOLIFY_TOKEN" ]; then
+            echo "Segredos do Coolify não configurados; deploy automático ignorado."
+            exit 0
+          fi
+          curl -fsS -X GET "$COOLIFY_WEBHOOK_URL" -H "Authorization: Bearer $COOLIFY_TOKEN"

@@ -1,0 +1,41 @@
+# Servidor de sinalização do KR Desk no Coolify (recurso "Docker Compose").
+# Segredos ficam nas variáveis de ambiente do Coolify, nunca neste arquivo.
+# Passo a passo: docs/INFRA.md.
+services:
+  signaling:
+    image: ghcr.io/kryvon-io/kr-desk-server:latest
+    restart: unless-stopped
+    environment:
+      # O Coolify gera o roteamento/TLS (Traefik) para este domínio.
+      SERVICE_FQDN_SIGNALING_3000: ${SERVICE_FQDN_SIGNALING_3000}
+      NODE_ENV: production
+      PORT: "3000"
+      # Banco Neon (o mesmo da Vercel): use a URL direta (sem pooler).
+      DATABASE_URL_UNPOOLED: ${DATABASE_URL_UNPOOLED:?defina no Coolify}
+      # Fase de transição: aponte para o MESMO Upstash da Vercel para as duas
+      # hospedagens se enxergarem. Depois da migração, apague REDIS_URL e o
+      # servidor passa a rotear em memória (SIGNALING_SINGLE_INSTANCE=1).
+      REDIS_URL: ${REDIS_URL:-}
+      SIGNALING_SINGLE_INSTANCE: "1"
+      # TURN da Cloudflare (as mesmas credenciais da Vercel).
+      CF_TURN_KEY_ID: ${CF_TURN_KEY_ID:-}
+      CF_TURN_API_TOKEN: ${CF_TURN_API_TOKEN:-}
+      # Conexões longas (6 h); o cliente renova sozinho quando pedido.
+      WS_MAX_LIFETIME_MS: "21600000"
+      # 1 = só o Traefik do Coolify na frente (DNS da Cloudflare sem proxy).
+      # 2 = Cloudflare com proxy (nuvem laranja) + Traefik.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # 2 vCPU / 4 GB na CX23: limite folgado, protege o Coolify de vazamentos.
+    mem_limit: 512m
+    stop_grace_period: 15s

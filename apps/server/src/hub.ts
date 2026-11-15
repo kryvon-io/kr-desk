@@ -30,6 +30,14 @@ export interface HubConfig {
   pendingTimeoutMs: number;
   /** TTL da presença; o cliente envia `ping` bem antes disso. */
   presenceTtlSec: number;
+  /**
+   * Intervalo mínimo entre renovações da presença. O cliente manda `ping` a
+   * cada 10 s (para detectar conexão morta), mas renovar a presença em todo
+   * ping custaria um comando no Redis a cada 10 s por dispositivo.
+   */
+  presenceRefreshMs: number;
+  /** Atualiza `lastSeenAt` no banco no máximo uma vez neste intervalo. */
+  touchIntervalMs: number;
 }
 
 export const DEFAULT_HUB_CONFIG: HubConfig = {
@@ -38,6 +46,8 @@ export const DEFAULT_HUB_CONFIG: HubConfig = {
   authTimeoutMs: 10_000,
   pendingTimeoutMs: 45_000,
   presenceTtlSec: 60,
+  presenceRefreshMs: 25_000,
+  touchIntervalMs: 6 * 60 * 60 * 1000,
 };
 
 export interface HubLogger {
@@ -146,6 +156,8 @@ class Connection {
   private unsubscribe: Unsubscribe | null = null;
   private superseded = false;
   private closed = false;
+  /** Última renovação da presença (ms). */
+  private presenceAt = 0;
   private timers: NodeJS.Timeout[] = [];
   private windowStart = Date.now();
   private windowCount = 0;
@@ -261,7 +273,14 @@ class Connection {
 
     let device = await store.findByPublicKey(msg.public_key);
     if (device) {
-      await store.touch(device.id, msg.device_name, msg.app_version);
+      // Cada reconexão autentica de novo: só grava no banco se algo mudou ou
+      // se o último registro de atividade já está velho.
+      const stale =
+        !device.lastSeenAt ||
+        Date.now() - device.lastSeenAt.getTime() >= this.hub.config.touchIntervalMs;
+      if (stale || device.name !== msg.device_name || device.appVersion !== msg.app_version) {
+        await store.touch(device.id, msg.device_name, msg.app_version);
+      }
     } else {
       if (await this.hub.limited(`register:${this.ip}`, LIMITS.registerPerIp)) {
         return this.fail("rate_limited", "Muitos registros a partir deste endereço");
@@ -287,7 +306,7 @@ class Connection {
       deviceChannel(device.id),
       JSON.stringify({ kind: "superseded", connId: this.id } satisfies Routed),
     );
-    await this.refreshPresence();
+    await this.refreshPresence(true);
     this.send({ type: "auth_ok", device_id: device.id });
   }
 
@@ -304,8 +323,11 @@ class Connection {
     if (!this.superseded) this.send(routed.msg);
   }
 
-  private async refreshPresence() {
+  private async refreshPresence(force = false) {
     if (!this.device || this.superseded) return;
+    const now = Date.now();
+    if (!force && now - this.presenceAt < this.hub.config.presenceRefreshMs) return;
+    this.presenceAt = now;
     const { bus } = this.hub.deps;
     await bus.set(presenceKey(this.device.id), this.id, this.hub.config.presenceTtlSec);
   }

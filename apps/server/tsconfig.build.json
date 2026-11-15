@@ -1,0 +1,11 @@
+{
+  "//": "Build da imagem Docker (VPS/Coolify): compila src/ para dist/. A Vercel não usa isto.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "sourceMap": true
+  },
+  "include": ["src"]
+}

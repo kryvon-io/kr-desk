@@ -12,7 +12,7 @@
 
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use futures_util::stream::{SplitSink, SplitStream};
@@ -27,11 +27,14 @@ use tracing::{debug, info, warn};
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-/// Endereço padrão do servidor de produção.
+/// Endereço padrão do servidor de produção. Aceita uma lista separada por
+/// vírgula: o cliente tenta o primeiro e passa ao seguinte quando a conexão
+/// falha (failover entre hospedagens durante uma migração).
 pub const DEFAULT_URL: &str = "wss://kr-desk-server.vercel.app/ws";
 
 #[derive(Debug, Clone)]
 pub struct SignalingConfig {
+    /// Um endereço ou vários separados por vírgula, em ordem de preferência.
     pub url: String,
     pub device_name: String,
     pub app_version: String,
@@ -59,6 +62,21 @@ impl SignalingConfig {
             connect_timeout: Duration::from_secs(10),
             backoff_min: Duration::from_secs(1),
             backoff_max: Duration::from_secs(30),
+        }
+    }
+
+    /// Endereços configurados, em ordem de preferência (nunca vazio).
+    pub fn urls(&self) -> Vec<&str> {
+        let list: Vec<&str> = self
+            .url
+            .split(',')
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+            .collect();
+        if list.is_empty() {
+            vec![self.url.as_str()]
+        } else {
+            list
         }
     }
 }
@@ -171,6 +189,7 @@ pub fn spawn(
         events: ev_tx,
         online: online.clone(),
         ping_nonce: AtomicU64::new(0),
+        url_idx: AtomicUsize::new(0),
     };
     tokio::spawn(client.run(cmd_rx));
     (SignalingHandle { tx: cmd_tx, online }, ev_rx)
@@ -190,9 +209,24 @@ struct Client {
     events: mpsc::UnboundedSender<SignalingEvent>,
     online: Arc<AtomicBool>,
     ping_nonce: AtomicU64,
+    /// Índice (em `config.urls()`) do servidor em uso; avança a cada falha.
+    url_idx: AtomicUsize,
 }
 
 impl Client {
+    fn current_url(&self) -> String {
+        let urls = self.config.urls();
+        urls[self.url_idx.load(Ordering::SeqCst) % urls.len()].to_string()
+    }
+
+    /// Passa ao próximo servidor da lista. Retorna `true` se ainda há
+    /// alternativa não tentada nesta volta (então vale tentar logo).
+    fn next_url(&self) -> bool {
+        let len = self.config.urls().len();
+        let idx = self.url_idx.fetch_add(1, Ordering::SeqCst) + 1;
+        len > 1 && !idx.is_multiple_of(len)
+    }
+
     fn emit(&self, ev: SignalingEvent) {
         let _ = self.events.send(ev);
     }
@@ -209,12 +243,19 @@ impl Client {
         let mut attempt: u32 = 0;
         loop {
             self.set_status(ConnectionStatus::Connecting);
-            let conn = match establish(&self.config, &self.identity).await {
+            let url = self.current_url();
+            let conn = match establish(&self.config, &self.identity, &url).await {
                 Ok(c) => c,
                 Err(err) => {
-                    let delay = backoff(&self.config, attempt);
-                    attempt = attempt.saturating_add(1);
-                    warn!(%err, ?delay, "falha ao conectar na sinalização");
+                    // Há outro servidor na lista: tenta logo; senão, backoff.
+                    let delay = if self.next_url() {
+                        self.config.backoff_min
+                    } else {
+                        let d = backoff(&self.config, attempt);
+                        attempt = attempt.saturating_add(1);
+                        d
+                    };
+                    warn!(%err, %url, ?delay, "falha ao conectar na sinalização");
                     self.set_status(ConnectionStatus::Offline {
                         reason: err.to_string(),
                         retry_in_ms: delay.as_millis() as u64,
@@ -328,8 +369,8 @@ impl Client {
                     Ok(ServerMessage::ReconnectSoon { in_ms }) => {
                         debug!(in_ms, "servidor pediu rotação; abrindo nova conexão");
                         if next.is_none() {
-                            let (cfg, id) = (self.config.clone(), self.identity.clone());
-                            next = Some(Box::pin(async move { establish(&cfg, &id).await }));
+                            let (cfg, id, url) = (self.config.clone(), self.identity.clone(), self.current_url());
+                            next = Some(Box::pin(async move { establish(&cfg, &id, &url).await }));
                         }
                     }
                     Ok(ServerMessage::Pong { .. } | ServerMessage::Hello { .. } | ServerMessage::AuthOk { .. }) => {}
@@ -397,9 +438,10 @@ enum Ended {
 async fn establish(
     config: &SignalingConfig,
     identity: &DeviceIdentity,
+    url: &str,
 ) -> Result<Conn, SignalingError> {
     let fut = async {
-        let (ws, _) = tokio_tungstenite::connect_async(config.url.as_str()).await?;
+        let (ws, _) = tokio_tungstenite::connect_async(url).await?;
         let (mut sink, mut stream) = ws.split();
 
         let nonce = loop {
@@ -488,5 +530,13 @@ mod tests {
             assert!(d >= cfg.backoff_min / 2, "{attempt}: {d:?}");
         }
         assert!(backoff(&cfg, 10) >= Duration::from_secs(15));
+    }
+
+    #[test]
+    fn url_list_is_parsed_in_order() {
+        let cfg = SignalingConfig::new(" wss://a/ws , ,wss://b/ws", "pc", "0");
+        assert_eq!(cfg.urls(), vec!["wss://a/ws", "wss://b/ws"]);
+        let single = SignalingConfig::new("ws://x", "pc", "0");
+        assert_eq!(single.urls(), vec!["ws://x"]);
     }
 }
